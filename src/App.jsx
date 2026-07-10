@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  FiGrid, 
-  FiPackage, 
-  FiShoppingBag, 
-  FiUsers, 
-  FiSettings, 
-  FiTrendingUp, 
-  FiPlus, 
-  FiTrash2, 
-  FiCheckCircle, 
-  FiClock, 
+import {
+  FiGrid,
+  FiPackage,
+  FiShoppingBag,
+  FiUsers,
+  FiSettings,
+  FiTrendingUp,
+  FiPlus,
+  FiTrash2,
+  FiCheckCircle,
+  FiClock,
   FiLogOut,
   FiFolder,
   FiEdit3,
@@ -22,10 +22,32 @@ import { supabase } from './utils/supabase';
 
 // Authorized Admin Email address
 const ADMIN_EMAIL = 'maazforlap@gmail.com';
+const COMBO_PRODUCT_MARKER = '<!-- product-type:combo -->';
+const isComboProduct = (product) => String(product?.description || '').includes(COMBO_PRODUCT_MARKER);
+const cleanProductDescription = (description = '') => String(description || '').replace(COMBO_PRODUCT_MARKER, '').trim();
+const extractComboItems = (description = '') => {
+  const text = String(description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  const match = text.match(/Combo includes:\s*(.+)/i);
+  if (!match) return ['', '', ''];
+  return match[1].split(',').map((item) => item.trim()).slice(0, 3).concat(['', '', '']).slice(0, 3);
+};
+const withProductTypeMarker = (description = '', productType = 'regular') => {
+  const cleanDescription = cleanProductDescription(description || '<p>Premium pure attar formulation.</p>');
+  return productType === 'combo' ? `${COMBO_PRODUCT_MARKER}${cleanDescription}` : cleanDescription;
+};
+const buildProductDescription = (description = '', productType = 'regular', comboItems = []) => {
+  const cleanDescription = cleanProductDescription(description || '<p>Premium pure attar formulation.</p>');
+  if (productType !== 'combo') return cleanDescription;
+  const normalizedItems = (comboItems || []).filter(Boolean);
+  const comboText = normalizedItems.length > 0 ? normalizedItems.join(', ') : '3 unique attars';
+  const comboHtml = `<p><strong>Combo includes:</strong> ${comboText}</p>`;
+  const body = `${cleanDescription}${cleanDescription ? ' ' : ''}${comboHtml}`.trim();
+  return `${COMBO_PRODUCT_MARKER}${body}`;
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
-  
+
   // Auth state
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -34,7 +56,7 @@ export default function App() {
   const [loginOtp, setLoginOtp] = useState('');
   const [authError, setAuthError] = useState('');
   const [authSuccessMsg, setAuthSuccessMsg] = useState('');
-  
+
   // Real-time Database state
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
@@ -49,13 +71,18 @@ export default function App() {
   const [editingBanner, setEditingBanner] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
+  const [orderStatusFilter, setOrderStatusFilter] = useState('All');
+  const [pendingStatusUpdate, setPendingStatusUpdate] = useState(null);
 
   // Forms state
   const [newProduct, setNewProduct] = useState({
     name: '',
-    category: [], // Change from '' to [] for array support
+    category: [],
     image: '',
-    images: [], // array of gallery images
+    images: [],
+    productType: 'regular',
+    comboPrice: '',
+    comboItems: ['', '', ''],
     price3mlOrig: '',
     price3mlOffer: '',
     price6mlOrig: '',
@@ -192,7 +219,7 @@ export default function App() {
     e.preventDefault();
     setAuthError('');
     setAuthSuccessMsg('');
-    
+
     if (loginEmail.trim().toLowerCase() !== ADMIN_EMAIL) {
       setAuthError(`Unauthorized: Only ${ADMIN_EMAIL} can access this admin panel.`);
       return;
@@ -227,12 +254,12 @@ export default function App() {
         type: 'email'
       });
       if (error) throw error;
-      
+
       if (data.user?.email !== ADMIN_EMAIL) {
         await supabase.auth.signOut();
         throw new Error("Access Denied: Unauthorized email.");
       }
-      
+
       setLoginEmail('');
       setLoginOtp('');
       setLoginStep('email');
@@ -310,7 +337,7 @@ export default function App() {
   // Image Upload helper
   const handleImageUpload = async (file, type) => {
     if (!file) return null;
-    
+
     setUploading(true);
     try {
       let fileToUpload = file;
@@ -335,17 +362,17 @@ export default function App() {
 
       const fileName = `${sanitizedBase}.${fileExt}`;
       const filePath = `${type}/${fileName}`;
-      
+
       const { data, error } = await supabase.storage
         .from('maazoud')
         .upload(filePath, fileToUpload);
-        
+
       if (error) throw error;
-      
+
       const { data: { publicUrl } } = supabase.storage
         .from('maazoud')
         .getPublicUrl(filePath);
-        
+
       return publicUrl;
     } catch (err) {
       alert("Error uploading image: " + err.message);
@@ -359,7 +386,7 @@ export default function App() {
   const handleAddCategory = async (e) => {
     e.preventDefault();
     if (!newCategory.name) return;
-    
+
     if (editingCategory) {
       const { error } = await supabase
         .from('categories')
@@ -400,14 +427,36 @@ export default function App() {
   // Handler: Add or Edit Product (Dynamic Images Carousel support)
   const handleAddProduct = async (e) => {
     e.preventDefault();
-    if (!newProduct.name || !newProduct.price3mlOffer || !newProduct.price6mlOffer) return;
-    
+    if (!newProduct.name) return;
+
+    const productType = newProduct.productType === 'combo' ? 'combo' : 'regular';
+    const comboPrice = Number(newProduct.comboPrice || 0);
+
+    if (productType === 'combo') {
+      if (!comboPrice) return;
+    } else if (!newProduct.price3mlOffer || !newProduct.price6mlOffer) {
+      return;
+    }
+
     // Set fallback list if images list is empty
     const galleryImages = newProduct.images && newProduct.images.length > 0
-      ? newProduct.images 
+      ? newProduct.images
       : [newProduct.image || "/images/placeholder.jpg"];
 
     const mainThumbnail = galleryImages[0];
+    const description = buildProductDescription(newProduct.description, productType, newProduct.comboItems);
+    const price3mlOrigValue = productType === 'combo'
+      ? comboPrice
+      : Number(newProduct.price3mlOrig || newProduct.price3mlOffer || 0);
+    const price3mlOfferValue = productType === 'combo'
+      ? comboPrice
+      : Number(newProduct.price3mlOffer || 0);
+    const price6mlOrigValue = productType === 'combo'
+      ? comboPrice
+      : Number(newProduct.price6mlOrig || newProduct.price6mlOffer || 0);
+    const price6mlOfferValue = productType === 'combo'
+      ? comboPrice
+      : Number(newProduct.price6mlOffer || 0);
 
     if (editingProduct) {
       const { error } = await supabase
@@ -417,11 +466,11 @@ export default function App() {
           category: newProduct.category || null,
           image: mainThumbnail,
           images: galleryImages,
-          price3mlorig: parseFloat(newProduct.price3mlOrig || newProduct.price3mlOffer),
-          price3mloffer: parseFloat(newProduct.price3mlOffer),
-          price6mlorig: parseFloat(newProduct.price6mlOrig || newProduct.price6mlOffer),
-          price6mloffer: parseFloat(newProduct.price6mlOffer),
-          description: newProduct.description || "<p>Premium pure attar formulation.</p>"
+          price3mlorig: price3mlOrigValue,
+          price3mloffer: price3mlOfferValue,
+          price6mlorig: price6mlOrigValue,
+          price6mloffer: price6mlOfferValue,
+          description: description || "<p>Premium pure attar formulation.</p>"
         })
         .eq('id', editingProduct.id);
 
@@ -438,11 +487,11 @@ export default function App() {
         category: newProduct.category || null,
         image: mainThumbnail,
         images: galleryImages,
-        price3mlorig: parseFloat(newProduct.price3mlOrig || newProduct.price3mlOffer),
-        price3mloffer: parseFloat(newProduct.price3mlOffer),
-        price6mlorig: parseFloat(newProduct.price6mlOrig || newProduct.price6mlOffer),
-        price6mloffer: parseFloat(newProduct.price6mlOffer),
-        description: newProduct.description || "<p>Premium pure attar formulation.</p>"
+        price3mlorig: price3mlOrigValue,
+        price3mloffer: price3mlOfferValue,
+        price6mlorig: price6mlOrigValue,
+        price6mloffer: price6mlOfferValue,
+        description: description || "<p>Premium pure attar formulation.</p>"
       };
 
       const { error } = await supabase.from('products').insert([productToAdd]);
@@ -457,6 +506,9 @@ export default function App() {
       category: [],
       image: '',
       images: [],
+      productType: 'regular',
+      comboPrice: '',
+      comboItems: ['', '', ''],
       price3mlOrig: '',
       price3mlOffer: '',
       price6mlOrig: '',
@@ -597,7 +649,7 @@ export default function App() {
     } else {
       newCategoryVal = [...currentCategories, categoryId];
     }
-    
+
     const { error } = await supabase
       .from('products')
       .update({ category: newCategoryVal })
@@ -618,16 +670,45 @@ export default function App() {
 
     if (error) {
       alert("Error updating status: " + error.message);
-      return;
+      return false;
     }
-    fetchOrders();
+    await fetchOrders();
+    return true;
+  };
+
+  const requestOrderStatusUpdate = (order, newStatus) => {
+    setPendingStatusUpdate({ order, newStatus });
+  };
+
+  const confirmOrderStatusUpdate = async () => {
+    if (!pendingStatusUpdate) return;
+
+    const { order, newStatus } = pendingStatusUpdate;
+    const updated = await handleUpdateOrderStatus(order.id, newStatus);
+    if (updated) {
+      if (selectedOrder?.id === order.id) {
+        setSelectedOrder({ ...selectedOrder, status: newStatus });
+      }
+      setPendingStatusUpdate(null);
+    }
   };
 
   const totalRevenue = orders.reduce((sum, o) => sum + (o.status === 'Delivered' ? (o.total_amount || 0) : 0), 0);
+  const getOrderStatus = (order) => order.status || 'Processing';
+  const orderStatusCounts = orders.reduce((counts, order) => {
+    const status = getOrderStatus(order);
+    if (counts[status] !== undefined) counts[status] += 1;
+    counts.All += 1;
+    return counts;
+  }, { All: 0, Processing: 0, Shipped: 0, Delivered: 0 });
+  const orderStatusFilters = ['All', 'Processing', 'Shipped', 'Delivered'];
 
-  const filteredOrders = orders.filter(order => 
-    order.id.toLowerCase().includes(orderSearchQuery.toLowerCase().trim())
-  );
+  const filteredOrders = orders.filter(order => {
+    const query = orderSearchQuery.toLowerCase().trim();
+    const matchesSearch = order.id.toLowerCase().includes(query);
+    const matchesStatus = orderStatusFilter === 'All' || getOrderStatus(order) === orderStatusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   if (authLoading && !user) {
     return (
@@ -644,12 +725,12 @@ export default function App() {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-stone-100 p-4 relative font-sans">
         <div className="absolute inset-0 bg-stone-900/5 backdrop-blur-sm z-0" />
-        
+
         <div className="relative bg-white rounded-lg max-w-sm w-full shadow-2xl border border-stone-200 p-8 space-y-6 z-10">
           <div className="text-center space-y-2">
             <span className="text-2xl font-bold tracking-[0.25em] text-stone-950 block">MAAZ OUD</span>
             <span className="text-[9px] tracking-[0.4em] text-[#8c6239] uppercase font-bold block">Admin Dashboard</span>
-            
+
             <div className="w-12 h-12 rounded-full bg-stone-50 border border-stone-200 flex items-center justify-center mx-auto text-[#8c6239] shadow-sm mt-4">
               <FiLock size={20} />
             </div>
@@ -678,7 +759,7 @@ export default function App() {
                 <label className="block text-[9px] font-bold text-stone-700 uppercase tracking-wider mb-1">
                   Administrator Email
                 </label>
-                <input 
+                <input
                   type="email"
                   required
                   placeholder="Enter administrator email..."
@@ -700,7 +781,7 @@ export default function App() {
                 <label className="block text-[9px] font-bold text-stone-700 uppercase tracking-wider mb-1">
                   6-Digit Verification Code
                 </label>
-                <input 
+                <input
                   type="text"
                   required
                   maxLength={6}
@@ -716,7 +797,7 @@ export default function App() {
               >
                 Verify & Access Dashboard
               </button>
-              
+
               <div className="flex justify-between text-[9px] font-bold uppercase tracking-wider pt-2">
                 <button
                   type="button"
@@ -750,7 +831,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-stone-50 text-stone-900 overflow-hidden font-sans">
-      
+
       {/* Sidebar */}
       <aside className="w-64 bg-black text-white flex flex-col justify-between flex-shrink-0">
         <div>
@@ -771,11 +852,10 @@ export default function App() {
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-md text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer ${
-                  activeTab === item.id 
-                    ? "bg-[#8c6239] text-white" 
+                className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-md text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer ${activeTab === item.id
+                    ? "bg-[#8c6239] text-white"
                     : "text-stone-400 hover:bg-stone-900 hover:text-white"
-                }`}
+                  }`}
               >
                 {item.icon}
                 {item.name}
@@ -786,9 +866,9 @@ export default function App() {
 
         <div className="p-6 border-t border-stone-950 flex items-center justify-between text-xs text-stone-500">
           <span>Admin: {user.email.split('@')[0]}</span>
-          <button 
+          <button
             onClick={handleLogout}
-            className="text-stone-400 hover:text-red-500 transition-colors cursor-pointer" 
+            className="text-stone-400 hover:text-red-500 transition-colors cursor-pointer"
             title="Logout"
           >
             <FiLogOut size={16} />
@@ -798,7 +878,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        
+
         {/* Header */}
         <header className="h-20 bg-white border-b border-stone-200 flex items-center justify-between px-8 flex-shrink-0">
           <div>
@@ -812,7 +892,7 @@ export default function App() {
             </h1>
             <p className="text-[10px] text-stone-400 uppercase tracking-widest mt-0.5">Control and monitor your attar business</p>
           </div>
-          
+
           <div className="flex items-center gap-4">
             <div className="w-9 h-9 rounded-full bg-[#8c6239] text-white font-bold flex items-center justify-center text-xs shadow-sm">
               M
@@ -831,16 +911,16 @@ export default function App() {
           </div>
         ) : (
           <main className="flex-grow overflow-y-auto p-8">
-            
+
             {/* TAB 1: DASHBOARD */}
             {activeTab === 'dashboard' && (
               <div className="space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
                   {[
-                    { name: "Delivered Revenue", value: `Rs. ${totalRevenue}`, icon: <FiTrendingUp className="text-[#8c6239]" size={24} />, desc: "Sum of delivered totals" },
-                    { name: "Total Orders", value: orders.length, icon: <FiPackage className="text-[#8c6239]" size={24} />, desc: "Client orders tracking list" },
-                    { name: "Active Categories", value: categories.length, icon: <FiFolder className="text-[#8c6239]" size={24} />, desc: "Stored in Supabase" },
-                    { name: "Products Catalog", value: products.length, icon: <FiShoppingBag className="text-[#8c6239]" size={24} />, desc: "Stored in Supabase" },
+                    { name: "Total Orders", value: orderStatusCounts.All, icon: <FiList className="text-[#8c6239]" size={24} />, desc: "All customer orders" },
+                    { name: "Processing Orders", value: orderStatusCounts.Processing, icon: <FiClock className="text-amber-600" size={24} />, desc: "New orders to pack" },
+                    { name: "Shipped Orders", value: orderStatusCounts.Shipped, icon: <FiPackage className="text-blue-600" size={24} />, desc: "Orders sent for delivery" },
+                    { name: "Delivered Orders", value: orderStatusCounts.Delivered, icon: <FiCheckCircle className="text-green-600" size={24} />, desc: `Delivered revenue Rs. ${totalRevenue}` },
                   ].map((stat, i) => (
                     <div key={i} className="bg-white border border-stone-200 p-6 rounded-md shadow-sm space-y-4">
                       <div className="flex justify-between items-start">
@@ -861,8 +941,8 @@ export default function App() {
                     {orders.length > 0 ? (
                       <div className="space-y-4">
                         {orders.slice(0, 4).map(order => (
-                          <div 
-                            key={order.id} 
+                          <div
+                            key={order.id}
                             onClick={() => setSelectedOrder(order)}
                             className="flex justify-between items-center gap-4 text-xs hover:bg-stone-50 p-2 rounded cursor-pointer transition-colors border border-transparent hover:border-stone-200"
                           >
@@ -878,9 +958,8 @@ export default function App() {
                             </div>
                             <div className="text-right">
                               <span className="font-bold text-stone-900 block">Rs. {order.total_amount}</span>
-                              <span className={`inline-block text-[9px] uppercase font-bold tracking-wider mt-0.5 ${
-                                order.status === 'Delivered' ? 'text-green-600' : order.status === 'Shipped' ? 'text-blue-600' :'text-amber-600'
-                              }`}>{order.status}</span>
+                              <span className={`inline-block text-[9px] uppercase font-bold tracking-wider mt-0.5 ${order.status === 'Delivered' ? 'text-green-600' : order.status === 'Shipped' ? 'text-blue-600' : 'text-amber-600'
+                                }`}>{order.status}</span>
                             </div>
                           </div>
                         ))}
@@ -907,10 +986,10 @@ export default function App() {
             {/* TAB 2: CATEGORIES */}
             {activeTab === 'categories' && (
               <div className="space-y-8">
-                
+
                 <div className="flex justify-between items-center gap-4">
                   <span className="text-xs uppercase font-bold tracking-wider text-stone-500">{categories.length} Categories Registered</span>
-                  <button 
+                  <button
                     onClick={() => {
                       if (showCategoryForm) {
                         setEditingCategory(null);
@@ -930,16 +1009,16 @@ export default function App() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[#8c6239]">
                       {editingCategory ? "Edit Category" : "Create New Category"}
                     </h3>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Category Name *</label>
-                        <input 
-                          type="text" 
-                          required 
+                        <input
+                          type="text"
+                          required
                           placeholder="e.g. Musk Collection"
                           value={newCategory.name}
-                          onChange={e => setNewCategory({...newCategory, name: e.target.value})}
+                          onChange={e => setNewCategory({ ...newCategory, name: e.target.value })}
                           className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
                         />
                       </div>
@@ -948,15 +1027,15 @@ export default function App() {
                           <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">
                             Upload Image (Supabase Storage) {uploading && "(Uploading...)"}
                           </label>
-                          <input 
-                            type="file" 
+                          <input
+                            type="file"
                             accept="image/*"
                             disabled={uploading}
                             onChange={async (e) => {
                               const file = e.target.files[0];
                               if (file) {
                                 const url = await handleImageUpload(file, 'categories');
-                                if (url) setNewCategory({...newCategory, image: url});
+                                if (url) setNewCategory({ ...newCategory, image: url });
                               }
                             }}
                             className="w-full text-xs text-stone-500 border border-stone-200 rounded p-1.5 bg-stone-50 cursor-pointer focus:outline-none"
@@ -964,22 +1043,22 @@ export default function App() {
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Or Image URL / Path</label>
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             placeholder="e.g. /images/oud_bottle_gold.jpg"
                             value={newCategory.image}
-                            onChange={e => setNewCategory({...newCategory, image: e.target.value})}
+                            onChange={e => setNewCategory({ ...newCategory, image: e.target.value })}
                             className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
                           />
                         </div>
                       </div>
                       <div className="md:col-span-2">
                         <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Category Description</label>
-                        <textarea 
+                        <textarea
                           rows={3}
                           placeholder="Brief summary of this attar collection..."
                           value={newCategory.description}
-                          onChange={e => setNewCategory({...newCategory, description: e.target.value})}
+                          onChange={e => setNewCategory({ ...newCategory, description: e.target.value })}
                           className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
                         />
                       </div>
@@ -1018,7 +1097,7 @@ export default function App() {
                                 </td>
                                 <td className="p-4 text-stone-500 font-mono">{cat.slug}</td>
                                 <td className="p-4">
-                                  <button 
+                                  <button
                                     onClick={() => setSelectedCategoryDetails(cat)}
                                     className="text-[#8c6239] font-bold hover:underline cursor-pointer"
                                   >
@@ -1027,7 +1106,7 @@ export default function App() {
                                 </td>
                                 <td className="p-4 text-center">
                                   <div className="flex items-center justify-center gap-2">
-                                    <button 
+                                    <button
                                       onClick={() => {
                                         setEditingCategory(cat);
                                         setNewCategory({ name: cat.name, image: cat.image, description: cat.description || '' });
@@ -1038,7 +1117,7 @@ export default function App() {
                                     >
                                       <FiEdit3 size={15} />
                                     </button>
-                                    <button 
+                                    <button
                                       onClick={() => handleDeleteCategory(cat.id)}
                                       className="p-2 text-stone-400 hover:text-red-600 transition-colors cursor-pointer"
                                       title="Delete Category"
@@ -1069,17 +1148,17 @@ export default function App() {
                         <div className="space-y-3">
                           <span className="text-[10px] font-bold text-stone-600 uppercase tracking-wider block">Sync Products</span>
                           <p className="text-[10px] text-stone-400 font-light block leading-normal">Check the products you want to show under this category:</p>
-                          
+
                           {products.length > 0 ? (
                             <div className="space-y-2 border border-stone-100 rounded p-3 bg-stone-50/50 max-h-[300px] overflow-y-auto">
                               {products.map(prod => {
-                                const isChecked = Array.isArray(prod.category) 
-                                  ? prod.category.includes(selectedCategoryDetails.id) 
+                                const isChecked = Array.isArray(prod.category)
+                                  ? prod.category.includes(selectedCategoryDetails.id)
                                   : prod.category === selectedCategoryDetails.id;
                                 return (
                                   <label key={prod.id} className="flex items-center gap-2.5 text-xs text-stone-700 hover:text-stone-900 cursor-pointer py-1 border-b border-stone-100/50 last:border-b-0">
-                                    <input 
-                                      type="checkbox" 
+                                    <input
+                                      type="checkbox"
                                       checked={isChecked}
                                       onChange={() => handleToggleProductCategory(prod.id, selectedCategoryDetails.id)}
                                       className="accent-[#8c6239] cursor-pointer"
@@ -1111,18 +1190,21 @@ export default function App() {
             {/* TAB 3: PRODUCTS */}
             {activeTab === 'products' && (
               <div className="space-y-6">
-                
+
                 <div className="flex justify-between items-center gap-4">
                   <span className="text-xs uppercase font-bold tracking-wider text-stone-500">{products.length} Products Cataloged</span>
-                  <button 
+                  <button
                     onClick={() => {
                       if (showProductForm) {
                         setEditingProduct(null);
                         setNewProduct({
                           name: '',
-                          category: '',
+                          category: [],
                           image: '',
                           images: [],
+                          productType: 'regular',
+                          comboPrice: '',
+                          comboItems: ['', '', ''],
                           price3mlOrig: '',
                           price3mlOffer: '',
                           price6mlOrig: '',
@@ -1144,34 +1226,45 @@ export default function App() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[#8c6239] border-b border-stone-100 pb-2">
                       {editingProduct ? "Edit Attar Product" : "Create New Attar Product"}
                     </h3>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="md:col-span-2">
                         <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Product Name *</label>
-                        <input 
-                          type="text" 
-                          required 
+                        <input
+                          type="text"
+                          required
                           placeholder="e.g. Kashmiri Kasturi Musk Imperial"
                           value={newProduct.name}
-                          onChange={e => setNewProduct({...newProduct, name: e.target.value})}
+                          onChange={e => setNewProduct({ ...newProduct, name: e.target.value })}
                           className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
                         />
+                      </div>
+                      <div className="md:col-span-1">
+                        <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Product Type</label>
+                        <select
+                          value={newProduct.productType}
+                          onChange={(e) => setNewProduct({ ...newProduct, productType: e.target.value })}
+                          className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                        >
+                          <option value="regular">Regular Attar</option>
+                          <option value="combo">Combo Product</option>
+                        </select>
                       </div>
                       <div className="md:col-span-3">
                         <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-2">Categories (Select all that apply)</label>
                         <div className="flex flex-wrap gap-3 p-3 bg-stone-50 border border-stone-200 rounded">
                           {categories.map(c => {
-                            const isChecked = Array.isArray(newProduct.category) 
-                              ? newProduct.category.includes(c.id) 
+                            const isChecked = Array.isArray(newProduct.category)
+                              ? newProduct.category.includes(c.id)
                               : newProduct.category === c.id;
                             return (
                               <label key={c.id} className="flex items-center gap-2 text-xs text-stone-700 cursor-pointer bg-white px-3 py-1.5 rounded border border-stone-250 hover:border-[#8c6239] transition-all">
-                                <input 
-                                  type="checkbox" 
+                                <input
+                                  type="checkbox"
                                   checked={isChecked}
                                   onChange={(e) => {
-                                    let current = Array.isArray(newProduct.category) 
-                                      ? [...newProduct.category] 
+                                    let current = Array.isArray(newProduct.category)
+                                      ? [...newProduct.category]
                                       : (newProduct.category ? [newProduct.category] : []);
                                     if (e.target.checked) {
                                       if (!current.includes(c.id)) {
@@ -1196,7 +1289,7 @@ export default function App() {
                         <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider">
                           Product Image Gallery (First image acts as main thumbnail, rest are carousel slides)
                         </label>
-                        
+
                         {newProduct.images && newProduct.images.length > 0 && (
                           <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 p-3 bg-stone-50 rounded border border-stone-200">
                             {newProduct.images.map((url, idx) => (
@@ -1229,8 +1322,8 @@ export default function App() {
                             <label className="block text-[9px] font-semibold text-stone-500 uppercase tracking-wider mb-1">
                               Upload Gallery Image {uploading && "(Uploading...)"}
                             </label>
-                            <input 
-                              type="file" 
+                            <input
+                              type="file"
                               accept="image/*"
                               disabled={uploading}
                               onChange={async (e) => {
@@ -1239,7 +1332,7 @@ export default function App() {
                                   const url = await handleImageUpload(file, 'products');
                                   if (url) {
                                     const currentImages = newProduct.images || [];
-                                    setNewProduct({...newProduct, images: [...currentImages, url]});
+                                    setNewProduct({ ...newProduct, images: [...currentImages, url] });
                                   }
                                 }
                               }}
@@ -1249,8 +1342,8 @@ export default function App() {
                           <div>
                             <label className="block text-[9px] font-semibold text-stone-500 uppercase tracking-wider mb-1">Or Paste Image URL</label>
                             <div className="flex gap-2">
-                              <input 
-                                type="text" 
+                              <input
+                                type="text"
                                 id="admin-gallery-url"
                                 placeholder="e.g. /images/rose_bottle_angle.jpg"
                                 className="flex-1 bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
@@ -1261,7 +1354,7 @@ export default function App() {
                                   const input = document.getElementById('admin-gallery-url');
                                   if (input && input.value.trim()) {
                                     const currentImages = newProduct.images || [];
-                                    setNewProduct({...newProduct, images: [...currentImages, input.value.trim()]});
+                                    setNewProduct({ ...newProduct, images: [...currentImages, input.value.trim()] });
                                     input.value = '';
                                   }
                                 }}
@@ -1277,56 +1370,91 @@ export default function App() {
                     </div>
 
                     <div className="border-t border-stone-100 pt-4 space-y-3">
-                      <span className="text-[10px] font-bold text-stone-700 uppercase tracking-wider block">Bottles Pricing details</span>
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <div>
-                          <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">3ml Original Price (Rs.)</label>
-                          <input 
-                            type="number" 
-                            placeholder="e.g. 150"
-                            value={newProduct.price3mlOrig}
-                            onChange={e => setNewProduct({...newProduct, price3mlOrig: e.target.value})}
-                            className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
-                          />
+                      <span className="text-[10px] font-bold text-stone-700 uppercase tracking-wider block">Pricing details</span>
+                      {newProduct.productType === 'combo' ? (
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-4">
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">Combo Price * (Rs.)</label>
+                            <input
+                              type="number"
+                              required
+                              placeholder="e.g. 540"
+                              value={newProduct.comboPrice}
+                              onChange={e => setNewProduct({ ...newProduct, comboPrice: e.target.value })}
+                              className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">Combo Includes</label>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              {newProduct.comboItems.map((item, index) => (
+                                <input
+                                  key={index}
+                                  type="text"
+                                  placeholder={`Attar ${index + 1}`}
+                                  value={item}
+                                  onChange={(e) => {
+                                    const updatedItems = [...newProduct.comboItems];
+                                    updatedItems[index] = e.target.value;
+                                    setNewProduct({ ...newProduct, comboItems: updatedItems });
+                                  }}
+                                  className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                                />
+                              ))}
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">3ml Offer Price * (Rs.)</label>
-                          <input 
-                            type="number" 
-                            required
-                            placeholder="e.g. 120"
-                            value={newProduct.price3mlOffer}
-                            onChange={e => setNewProduct({...newProduct, price3mlOffer: e.target.value})}
-                            className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
-                          />
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">3ml Original Price (Rs.)</label>
+                            <input
+                              type="number"
+                              placeholder="e.g. 150"
+                              value={newProduct.price3mlOrig}
+                              onChange={e => setNewProduct({ ...newProduct, price3mlOrig: e.target.value })}
+                              className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">3ml Offer Price * (Rs.)</label>
+                            <input
+                              type="number"
+                              required
+                              placeholder="e.g. 120"
+                              value={newProduct.price3mlOffer}
+                              onChange={e => setNewProduct({ ...newProduct, price3mlOffer: e.target.value })}
+                              className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">6ml Original Price (Rs.)</label>
+                            <input
+                              type="number"
+                              placeholder="e.g. 270"
+                              value={newProduct.price6mlOrig}
+                              onChange={e => setNewProduct({ ...newProduct, price6mlOrig: e.target.value })}
+                              className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">6ml Offer Price * (Rs.)</label>
+                            <input
+                              type="number"
+                              required
+                              placeholder="e.g. 216"
+                              value={newProduct.price6mlOffer}
+                              onChange={e => setNewProduct({ ...newProduct, price6mlOffer: e.target.value })}
+                              className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                            />
+                          </div>
                         </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">6ml Original Price (Rs.)</label>
-                          <input 
-                            type="number" 
-                            placeholder="e.g. 270"
-                            value={newProduct.price6mlOrig}
-                            onChange={e => setNewProduct({...newProduct, price6mlOrig: e.target.value})}
-                            className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">6ml Offer Price * (Rs.)</label>
-                          <input 
-                            type="number" 
-                            required
-                            placeholder="e.g. 216"
-                            value={newProduct.price6mlOffer}
-                            onChange={e => setNewProduct({...newProduct, price6mlOffer: e.target.value})}
-                            className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
-                          />
-                        </div>
-                      </div>
+                      )}
                     </div>
 
                     <div className="border-t border-stone-100 pt-4 space-y-1.5">
                       <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider">Product Rich Description *</label>
-                      <Editor 
+                      <Editor
                         value={newProduct.description}
                         onChange={(html) => setNewProduct({ ...newProduct, description: html })}
                       />
@@ -1367,6 +1495,9 @@ export default function App() {
                                 <div>
                                   <span className="font-bold text-stone-900 block">{prod.name}</span>
                                   <span className="text-[10px] text-stone-400 font-mono block">{prod.id}</span>
+                                  <span className="text-[9px] uppercase font-semibold text-[#8c6239] mt-0.5 block">
+                                    {isComboProduct(prod) ? 'Combo Product' : 'Regular Attar'}
+                                  </span>
                                 </div>
                               </div>
                             </td>
@@ -1403,7 +1534,7 @@ export default function App() {
                             </td>
                             <td className="p-4 text-center">
                               <div className="flex items-center justify-center gap-2">
-                                <button 
+                                <button
                                   onClick={() => {
                                     setEditingProduct(prod);
                                     setNewProduct({
@@ -1411,6 +1542,9 @@ export default function App() {
                                       category: Array.isArray(prod.category) ? prod.category : (prod.category ? [prod.category] : []),
                                       image: prod.image,
                                       images: prod.images || [prod.image],
+                                      productType: isComboProduct(prod) ? 'combo' : 'regular',
+                                      comboPrice: String(prod.price3mloffer || ''),
+                                      comboItems: extractComboItems(prod.description),
                                       price3mlOrig: String(prod.price3mlorig || ''),
                                       price3mlOffer: String(prod.price3mloffer || ''),
                                       price6mlOrig: String(prod.price6mlorig || ''),
@@ -1424,7 +1558,7 @@ export default function App() {
                                 >
                                   <FiEdit3 size={15} />
                                 </button>
-                                <button 
+                                <button
                                   onClick={() => handleDeleteProduct(prod.id)}
                                   className="p-2 text-stone-400 hover:text-red-650 transition-colors cursor-pointer"
                                   title="Delete Product"
@@ -1449,12 +1583,12 @@ export default function App() {
               <div className="space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <span className="text-xs uppercase font-bold tracking-wider text-stone-500">
-                    {filteredOrders.length} of {orders.length} Orders Placed
+                    {filteredOrders.length} of {orders.length} Orders Shown
                   </span>
-                  
+
                   {/* Search Bar */}
                   <div className="relative w-full sm:max-w-xs">
-                    <input 
+                    <input
                       type="text"
                       placeholder="Search Order ID..."
                       value={orderSearchQuery}
@@ -1465,7 +1599,7 @@ export default function App() {
                       &#128269;
                     </span>
                     {orderSearchQuery && (
-                      <button 
+                      <button
                         onClick={() => setOrderSearchQuery('')}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-450 hover:text-stone-700 text-xs cursor-pointer"
                       >
@@ -1474,7 +1608,35 @@ export default function App() {
                     )}
                   </div>
                 </div>
-                
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {orderStatusFilters.map((status) => {
+                    const active = orderStatusFilter === status;
+                    const colorClass = status === 'Delivered'
+                      ? 'text-green-700 border-green-200 bg-green-50'
+                      : status === 'Shipped'
+                        ? 'text-blue-700 border-blue-200 bg-blue-50'
+                        : status === 'Processing'
+                          ? 'text-amber-700 border-amber-200 bg-amber-50'
+                          : 'text-stone-700 border-stone-200 bg-white';
+
+                    return (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => setOrderStatusFilter(status)}
+                        className={`inline-flex items-center gap-2 rounded border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${active ? colorClass : 'bg-white border-stone-200 text-stone-450 hover:text-stone-800 hover:border-stone-300'
+                          }`}
+                      >
+                        <span>{status}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[9px] ${active ? 'bg-white/80' : 'bg-stone-100 text-stone-500'}`}>
+                          {orderStatusCounts[status]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <div className="bg-white border border-stone-200 rounded-md shadow-sm overflow-hidden">
                   {filteredOrders.length > 0 ? (
                     <table className="w-full text-left text-xs border-collapse">
@@ -1492,8 +1654,8 @@ export default function App() {
                       </thead>
                       <tbody>
                         {filteredOrders.map((order) => (
-                          <tr 
-                            key={order.id} 
+                          <tr
+                            key={order.id}
                             onClick={() => setSelectedOrder(order)}
                             className="border-b border-stone-200 hover:bg-stone-50/70 transition-colors cursor-pointer"
                           >
@@ -1514,34 +1676,33 @@ export default function App() {
                               ))}
                             </td>
                             <td className="p-4 text-stone-550">
-                              {new Date(order.created_at).toLocaleDateString("en-US", { 
+                              {new Date(order.created_at).toLocaleDateString("en-US", {
                                 year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
                               })}
                             </td>
                             <td className="p-4 text-stone-600 font-medium">{order.payment_method}</td>
                             <td className="p-4 font-bold text-stone-900">Rs. {order.total_amount}</td>
                             <td className="p-4">
-                              <span className={`inline-block px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full ${
-                                order.status === 'Delivered' 
-                                  ? 'bg-green-100 text-green-800' 
-                                  : order.status === 'Shipped' 
-                                  ? 'bg-blue-100 text-blue-800' 
-                                  : 'bg-yellow-100 text-yellow-800'
-                              }`}>
+                              <span className={`inline-block px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full ${order.status === 'Delivered'
+                                  ? 'bg-green-100 text-green-800'
+                                  : order.status === 'Shipped'
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : 'bg-yellow-100 text-yellow-800'
+                                }`}>
                                 {order.status}
                               </span>
                             </td>
                             <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-center gap-2">
                                 <button
-                                  onClick={() => handleUpdateOrderStatus(order.id, 'Shipped')}
+                                  onClick={() => requestOrderStatusUpdate(order, 'Shipped')}
                                   className="p-1.5 bg-stone-50 hover:bg-blue-50 text-blue-600 border border-stone-200 hover:border-blue-300 rounded transition-colors cursor-pointer"
                                   title="Mark as Shipped"
                                 >
                                   <FiClock size={12} />
                                 </button>
                                 <button
-                                  onClick={() => handleUpdateOrderStatus(order.id, 'Delivered')}
+                                  onClick={() => requestOrderStatusUpdate(order, 'Delivered')}
                                   className="p-1.5 bg-stone-50 hover:bg-green-50 text-green-600 border border-stone-200 hover:border-green-300 rounded transition-colors cursor-pointer"
                                   title="Mark as Delivered"
                                 >
@@ -1565,7 +1726,7 @@ export default function App() {
               <div className="space-y-6">
                 <div className="flex justify-between items-center gap-4">
                   <span className="text-xs uppercase font-bold tracking-wider text-stone-500">{banners.length} Active Banners</span>
-                  <button 
+                  <button
                     onClick={() => {
                       if (editingBanner) {
                         setEditingBanner(null);
@@ -1585,26 +1746,26 @@ export default function App() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[#8c6239]">
                       {editingBanner ? "Edit Promotion Banner" : "Add Promotion Banner"}
                     </h3>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Banner Title *</label>
-                        <input 
-                          type="text" 
-                          required 
+                        <input
+                          type="text"
+                          required
                           placeholder="e.g. Eid Special Discount 25% Off"
                           value={newBanner.title}
-                          onChange={e => setNewBanner({...newBanner, title: e.target.value})}
+                          onChange={e => setNewBanner({ ...newBanner, title: e.target.value })}
                           className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
                         />
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Redirection Link / Path (Optional)</label>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           placeholder="e.g. /category/top-selling"
                           value={newBanner.link}
-                          onChange={e => setNewBanner({...newBanner, link: e.target.value})}
+                          onChange={e => setNewBanner({ ...newBanner, link: e.target.value })}
                           className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
                         />
                       </div>
@@ -1613,15 +1774,15 @@ export default function App() {
                           <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">
                             Upload Banner Image * {uploading && "(Uploading...)"}
                           </label>
-                          <input 
-                            type="file" 
+                          <input
+                            type="file"
                             accept="image/*"
                             disabled={uploading}
                             onChange={async (e) => {
                               const file = e.target.files[0];
                               if (file) {
                                 const url = await handleImageUpload(file, 'banners');
-                                if (url) setNewBanner({...newBanner, image: url});
+                                if (url) setNewBanner({ ...newBanner, image: url });
                               }
                             }}
                             className="w-full text-xs text-stone-500 border border-stone-200 rounded p-1.5 bg-stone-50 cursor-pointer focus:outline-none"
@@ -1629,11 +1790,11 @@ export default function App() {
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Or Public Image URL *</label>
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             placeholder="e.g. /images/eid_special_banner.jpg"
                             value={newBanner.image}
-                            onChange={e => setNewBanner({...newBanner, image: e.target.value})}
+                            onChange={e => setNewBanner({ ...newBanner, image: e.target.value })}
                             className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
                           />
                         </div>
@@ -1666,7 +1827,7 @@ export default function App() {
                             <td className="p-4 text-stone-500 font-mono">{banner.link || <span className="text-stone-300 italic">None</span>}</td>
                             <td className="p-4 text-center">
                               <div className="flex justify-center items-center gap-2">
-                                <button 
+                                <button
                                   onClick={() => {
                                     setEditingBanner(banner);
                                     setNewBanner({
@@ -1681,7 +1842,7 @@ export default function App() {
                                 >
                                   <FiEdit3 size={15} />
                                 </button>
-                                <button 
+                                <button
                                   onClick={() => handleDeleteBanner(banner.id)}
                                   className="p-2 text-stone-400 hover:text-red-650 transition-colors cursor-pointer"
                                   title="Delete Banner"
@@ -1706,7 +1867,7 @@ export default function App() {
               <div className="space-y-6">
                 <div className="flex justify-between items-center gap-4">
                   <span className="text-xs uppercase font-bold tracking-wider text-stone-500">{blogs.length} Active Blogs</span>
-                  <button 
+                  <button
                     onClick={() => {
                       if (editingBlog) {
                         setEditingBlog(null);
@@ -1727,16 +1888,16 @@ export default function App() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[#8c6239]">
                       {editingBlog ? "Edit Blog Post" : "Add Blog Post"}
                     </h3>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Blog Title *</label>
-                        <input 
-                          type="text" 
-                          required 
+                        <input
+                          type="text"
+                          required
                           placeholder="e.g. Benefits of Cambodian Oud Oil"
                           value={newBlog.title}
-                          onChange={e => setNewBlog({...newBlog, title: e.target.value})}
+                          onChange={e => setNewBlog({ ...newBlog, title: e.target.value })}
                           className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
                         />
                       </div>
@@ -1745,15 +1906,15 @@ export default function App() {
                           <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">
                             Upload Cover Image * {uploading && "(Uploading...)"}
                           </label>
-                          <input 
-                            type="file" 
+                          <input
+                            type="file"
                             accept="image/*"
                             disabled={uploading}
                             onChange={async (e) => {
                               const file = e.target.files[0];
                               if (file) {
                                 const url = await handleImageUpload(file, 'blogs');
-                                if (url) setNewBlog({...newBlog, image: url});
+                                if (url) setNewBlog({ ...newBlog, image: url });
                               }
                             }}
                             className="w-full text-xs text-stone-500 border border-stone-200 rounded p-1.5 bg-stone-50 cursor-pointer focus:outline-none"
@@ -1761,11 +1922,11 @@ export default function App() {
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Or Public Image URL *</label>
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             placeholder="e.g. /images/blog_cover.jpg"
                             value={newBlog.image}
-                            onChange={e => setNewBlog({...newBlog, image: e.target.value})}
+                            onChange={e => setNewBlog({ ...newBlog, image: e.target.value })}
                             className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
                           />
                         </div>
@@ -1774,7 +1935,7 @@ export default function App() {
 
                     <div>
                       <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Blog Content *</label>
-                      <Editor 
+                      <Editor
                         value={newBlog.content}
                         onChange={(html) => setNewBlog({ ...newBlog, content: html })}
                       />
@@ -1785,12 +1946,12 @@ export default function App() {
                       <h4 className="text-xs font-bold uppercase tracking-wider text-[#8c6239]">
                         Blog Post FAQs (Dynamic)
                       </h4>
-                      
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end bg-stone-50 p-4 rounded border border-stone-200">
                         <div>
                           <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Question</label>
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             placeholder="e.g. Is Cambodia Oud safe for skin?"
                             id="faq-question-input"
                             className="w-full bg-white border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
@@ -1798,8 +1959,8 @@ export default function App() {
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Answer</label>
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             placeholder="e.g. Yes, our attars are completely organic..."
                             id="faq-answer-input"
                             className="w-full bg-white border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
@@ -1883,7 +2044,7 @@ export default function App() {
                             <td className="p-4 text-stone-500 font-mono">{blog.slug}</td>
                             <td className="p-4 text-center">
                               <div className="flex justify-center items-center gap-2">
-                                <button 
+                                <button
                                   onClick={() => {
                                     setEditingBlog(blog);
                                     setNewBlog({
@@ -1899,7 +2060,7 @@ export default function App() {
                                 >
                                   <FiEdit3 size={15} />
                                 </button>
-                                <button 
+                                <button
                                   onClick={() => handleDeleteBlog(blog.id)}
                                   className="p-2 text-stone-400 hover:text-red-650 transition-colors cursor-pointer"
                                   title="Delete Blog"
@@ -1927,7 +2088,7 @@ export default function App() {
       {selectedOrder && (
         <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
           <div className="relative bg-white rounded-lg max-w-2xl w-full shadow-2xl overflow-hidden border border-stone-200">
-            
+
             {/* Header */}
             <div className="px-6 py-5 border-b border-stone-200 flex items-center justify-between bg-stone-50">
               <div>
@@ -1936,7 +2097,7 @@ export default function App() {
                   {selectedOrder.id}
                 </h2>
               </div>
-              <button 
+              <button
                 onClick={() => setSelectedOrder(null)}
                 className="p-2 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer text-xl font-bold"
               >
@@ -1946,25 +2107,24 @@ export default function App() {
 
             {/* Content */}
             <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
-              
+
               {/* Status & Date */}
               <div className="grid grid-cols-2 gap-4 border-b border-stone-100 pb-4">
                 <div>
                   <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Order Status</span>
-                  <span className={`inline-block px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full mt-1 ${
-                    selectedOrder.status === 'Delivered' 
-                      ? 'bg-green-100 text-green-800' 
-                      : selectedOrder.status === 'Shipped' 
-                      ? 'bg-blue-100 text-blue-800' 
-                      : 'bg-yellow-100 text-yellow-800'
-                  }`}>
+                  <span className={`inline-block px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full mt-1 ${selectedOrder.status === 'Delivered'
+                      ? 'bg-green-100 text-green-800'
+                      : selectedOrder.status === 'Shipped'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-yellow-100 text-yellow-800'
+                    }`}>
                     {selectedOrder.status}
                   </span>
                 </div>
                 <div>
                   <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Date & Time</span>
                   <span className="text-xs font-semibold text-stone-800 block mt-1">
-                    {new Date(selectedOrder.created_at).toLocaleString("en-US", { 
+                    {new Date(selectedOrder.created_at).toLocaleString("en-US", {
                       year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
                     })}
                   </span>
@@ -2011,9 +2171,9 @@ export default function App() {
                   {selectedOrder.items && selectedOrder.items.map((item, idx) => (
                     <div key={idx} className="flex justify-between items-center gap-4 p-3 bg-white hover:bg-stone-50/50 text-xs">
                       <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <img 
-                          src={item.product?.image || "/images/placeholder.jpg"} 
-                          alt="" 
+                        <img
+                          src={item.product?.image || "/images/placeholder.jpg"}
+                          alt=""
                           className="w-8 h-10 object-cover rounded border border-stone-200 bg-stone-50 flex-shrink-0"
                         />
                         <div className="min-w-0 flex-1">
@@ -2068,10 +2228,7 @@ export default function App() {
               <div className="flex gap-2">
                 {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && (
                   <button
-                    onClick={() => {
-                      handleUpdateOrderStatus(selectedOrder.id, 'Shipped');
-                      setSelectedOrder({ ...selectedOrder, status: 'Shipped' });
-                    }}
+                    onClick={() => requestOrderStatusUpdate(selectedOrder, 'Shipped')}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
                   >
                     Mark Shipped
@@ -2079,10 +2236,7 @@ export default function App() {
                 )}
                 {selectedOrder.status !== 'Delivered' && (
                   <button
-                    onClick={() => {
-                      handleUpdateOrderStatus(selectedOrder.id, 'Delivered');
-                      setSelectedOrder({ ...selectedOrder, status: 'Delivered' });
-                    }}
+                    onClick={() => requestOrderStatusUpdate(selectedOrder, 'Delivered')}
                     className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
                   >
                     Mark Delivered
@@ -2097,6 +2251,49 @@ export default function App() {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {pendingStatusUpdate && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-md border border-stone-200 bg-white shadow-2xl overflow-hidden">
+            <div className="border-b border-stone-200 px-5 py-4">
+              <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-[#8c6239]">Confirm Status Update</span>
+              <h3 className="mt-1 text-base font-bold text-stone-900">
+                Mark order as {pendingStatusUpdate.newStatus}?
+              </h3>
+            </div>
+
+            <div className="space-y-3 px-5 py-4 text-xs text-stone-600">
+              <p>
+                This will update order <span className="font-bold text-stone-900">{pendingStatusUpdate.order.id}</span>
+                {pendingStatusUpdate.order.customer_name ? (
+                  <> for <span className="font-bold text-stone-900">{pendingStatusUpdate.order.customer_name}</span></>
+                ) : null}.
+              </p>
+              <p className="rounded border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                Please confirm only after the order has actually reached this stage.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-stone-200 bg-stone-50 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setPendingStatusUpdate(null)}
+                className="rounded border border-stone-200 bg-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-stone-700 hover:bg-stone-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmOrderStatusUpdate}
+                className={`rounded px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-white cursor-pointer ${pendingStatusUpdate.newStatus === 'Delivered' ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+              >
+                Confirm {pendingStatusUpdate.newStatus}
+              </button>
+            </div>
           </div>
         </div>
       )}
