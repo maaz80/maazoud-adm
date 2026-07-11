@@ -20,6 +20,36 @@ import {
 import Editor from './components/Editor';
 import { supabase } from './utils/supabase';
 
+const getWhatsAppLink = (order) => {
+  if (!order) return "#";
+  const status = order.status;
+  const amount = order.total_amount;
+  const itemsStr = order.items?.map(i => i.product?.name || "Attar").join(", ");
+  
+  const orderDate = new Date(order.created_at);
+  const deliveryDate = new Date(orderDate);
+  deliveryDate.setDate(deliveryDate.getDate() + 7);
+  const formattedDeliveryDate = deliveryDate.toLocaleDateString("en-US", { month: 'short', day: 'numeric', year: 'numeric' });
+
+  let text = "";
+  if (status === "Placed" || status === "Processing") {
+    text = `Hello ${order.customer_name},\n\nCongratulations! Your order for ${itemsStr} (Rs. ${amount}) has been successfully placed. Your approximate delivery date is ${formattedDeliveryDate}.\n\nThank you for shopping with Maaz Oud!`;
+  } else if (status === "Shipped") {
+    text = `Hello ${order.customer_name},\n\nGreat news! Your order for ${itemsStr} (Rs. ${amount}) has been successfully shipped. Your approximate delivery date is ${formattedDeliveryDate}.\n\nThank you for shopping with Maaz Oud!`;
+  } else if (status === "Delivered") {
+    text = `Hello ${order.customer_name},\n\nCongratulations! Your order for ${itemsStr} (Rs. ${amount}) has been successfully delivered. We hope you enjoy the fragrance!\n\nThank you for shopping with Maaz Oud!`;
+  } else {
+    text = `Hello ${order.customer_name},\n\nYour order for ${itemsStr} is currently marked as ${status}.`;
+  }
+
+  let phone = order.phone.replace(/[^0-9]/g, '');
+  if (phone.length === 10) {
+    phone = '91' + phone;
+  }
+  
+  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+};
+
 // Authorized Admin Email address
 const ADMIN_EMAIL = 'maazforlap@gmail.com';
 const COMBO_PRODUCT_MARKER = '<!-- product-type:combo -->';
@@ -360,7 +390,8 @@ export default function App() {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/(^-|-$)+/g, '');
 
-      const fileName = `${sanitizedBase}.${fileExt}`;
+      const randomSuffix = Math.floor(1 + Math.random() * 9);
+      const fileName = `${sanitizedBase}-${randomSuffix}.${fileExt}`;
       const filePath = `${type}/${fileName}`;
 
       const { data, error } = await supabase.storage
@@ -379,6 +410,21 @@ export default function App() {
       return null;
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleImageDelete = async (url) => {
+    if (!url) return;
+    try {
+      // Extract path after the bucket name 'maazoud'
+      const match = url.match(/\/maazoud\/(.+)$/);
+      if (match && match[1]) {
+        const pathToRemove = match[1];
+        const { error } = await supabase.storage.from('maazoud').remove([pathToRemove]);
+        if (error) console.error("Error deleting image from bucket:", error);
+      }
+    } catch (err) {
+      console.error("Failed to delete image:", err);
     }
   };
 
@@ -1298,6 +1344,7 @@ export default function App() {
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    handleImageDelete(url);
                                     const updated = [...newProduct.images];
                                     updated.splice(idx, 1);
                                     setNewProduct({ ...newProduct, images: updated });
@@ -2141,7 +2188,20 @@ export default function App() {
                   </div>
                   <div>
                     <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block mb-0.5">Phone Number</span>
-                    <a href={`tel:${selectedOrder.phone}`} className="font-semibold text-[#8c6239] hover:underline block">{selectedOrder.phone}</a>
+                    <div className="flex items-center gap-2">
+                      <a href={`tel:${selectedOrder.phone}`} className="font-semibold text-[#8c6239] hover:underline">{selectedOrder.phone}</a>
+                      <a 
+                        href={getWhatsAppLink(selectedOrder)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center bg-green-500 hover:bg-green-600 text-white rounded p-1 transition-colors"
+                        title="Message on WhatsApp"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                          <path d="M13.601 2.326A7.854 7.854 0 0 0 7.994 0C3.627 0 .068 3.558.064 7.926c0 1.399.366 2.76 1.057 3.965L0 16l4.204-1.102a7.933 7.933 0 0 0 3.79.965h.004c4.368 0 7.926-3.558 7.93-7.93A7.898 7.898 0 0 0 13.6 2.326zM7.994 14.521a6.573 6.573 0 0 1-3.356-.92l-.24-.144-2.494.654.666-2.433-.156-.251a6.56 6.56 0 0 1-1.007-3.505c0-3.626 2.957-6.584 6.591-6.584a6.56 6.56 0 0 1 4.66 1.931 6.557 6.557 0 0 1 1.928 4.66c-.004 3.639-2.961 6.592-6.592 6.592zm3.615-4.934c-.197-.099-1.17-.578-1.353-.646-.182-.065-.315-.099-.445.099-.133.197-.513.646-.627.775-.114.133-.232.148-.43.05-.197-.1-.836-.308-1.592-.985-.59-.525-.985-1.175-1.103-1.372-.114-.198-.011-.304.088-.403.087-.088.197-.232.296-.346.1-.114.133-.198.198-.33.065-.134.034-.248-.015-.347-.05-.099-.445-1.076-.612-1.47-.16-.389-.323-.335-.445-.34-.114-.007-.247-.007-.38-.007a.729.729 0 0 0-.529.247c-.182.198-.691.677-.691 1.654 0 .977.71 1.916.81 2.049.098.133 1.394 2.132 3.383 2.992.47.205.84.326 1.129.418.475.152.904.129 1.246.08.38-.058 1.171-.48 1.338-.943.164-.464.164-.86.114-.943-.049-.084-.182-.133-.38-.232z"/>
+                        </svg>
+                      </a>
+                    </div>
                   </div>
                   <div className="md:col-span-2">
                     <div className="flex justify-between items-center mb-1">
