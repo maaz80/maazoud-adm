@@ -37,7 +37,7 @@ const getWhatsAppLink = (order) => {
   } else if (status === "Shipped") {
     text = `Hello ${order.customer_name},\n\nGreat news! Your order for ${itemsStr} (Rs. ${amount}) has been successfully shipped. Your approximate delivery date is ${formattedDeliveryDate}.\n\nThank you for shopping with Maaz Oud!`;
   } else if (status === "Delivered") {
-    text = `Hello ${order.customer_name},\n\nCongratulations! Your order for ${itemsStr} (Rs. ${amount}) has been successfully delivered. We hope you enjoy the fragrance!\n\nThank you for shopping with Maaz Oud!`;
+    text = `Hello ${order.customer_name},\n\nCongratulations! Your order for ${itemsStr} (Rs. ${amount}) has been successfully delivered. We hope you enjoy the fragrance!\n\nIf you loved our attars, we would be incredibly grateful if you could take a moment to leave a review on our website. Your feedback means the world to us!\n\nThank you for shopping with Maaz Oud!`;
   } else {
     text = `Hello ${order.customer_name},\n\nYour order for ${itemsStr} is currently marked as ${status}.`;
   }
@@ -111,6 +111,7 @@ export default function App() {
     image: '',
     images: [],
     productType: 'regular',
+    comboOrigPrice: '',
     comboPrice: '',
     comboItems: ['', '', ''],
     price3mlOrig: '',
@@ -553,7 +554,8 @@ export default function App() {
       image: '',
       images: [],
       productType: 'regular',
-      comboPrice: '',
+      comboOrigPrice: '',
+    comboPrice: '',
       comboItems: ['', '', ''],
       price3mlOrig: '',
       price3mlOffer: '',
@@ -1249,7 +1251,8 @@ export default function App() {
                           image: '',
                           images: [],
                           productType: 'regular',
-                          comboPrice: '',
+                          comboOrigPrice: '',
+    comboPrice: '',
                           comboItems: ['', '', ''],
                           price3mlOrig: '',
                           price3mlOffer: '',
