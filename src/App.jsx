@@ -112,6 +112,7 @@ export default function App() {
     images: [],
     productType: 'regular',
     comboOrigPrice: '',
+    comboOrigPrice: '',
     comboPrice: '',
     comboItems: ['', '', ''],
     price3mlOrig: '',
@@ -478,6 +479,7 @@ export default function App() {
 
     const productType = newProduct.productType === 'combo' ? 'combo' : 'regular';
     const comboPrice = Number(newProduct.comboPrice || 0);
+    const comboOrigPrice = Number(newProduct.comboOrigPrice || newProduct.comboPrice || 0);
 
     if (productType === 'combo') {
       if (!comboPrice) return;
@@ -493,13 +495,13 @@ export default function App() {
     const mainThumbnail = galleryImages[0];
     const description = buildProductDescription(newProduct.description, productType, newProduct.comboItems);
     const price3mlOrigValue = productType === 'combo'
-      ? comboPrice
+      ? comboOrigPrice
       : Number(newProduct.price3mlOrig || newProduct.price3mlOffer || 0);
     const price3mlOfferValue = productType === 'combo'
       ? comboPrice
       : Number(newProduct.price3mlOffer || 0);
     const price6mlOrigValue = productType === 'combo'
-      ? comboPrice
+      ? comboOrigPrice
       : Number(newProduct.price6mlOrig || newProduct.price6mlOffer || 0);
     const price6mlOfferValue = productType === 'combo'
       ? comboPrice
@@ -555,6 +557,7 @@ export default function App() {
       images: [],
       productType: 'regular',
       comboOrigPrice: '',
+    comboOrigPrice: '',
     comboPrice: '',
       comboItems: ['', '', ''],
       price3mlOrig: '',
@@ -1252,6 +1255,7 @@ export default function App() {
                           images: [],
                           productType: 'regular',
                           comboOrigPrice: '',
+    comboOrigPrice: '',
     comboPrice: '',
                           comboItems: ['', '', ''],
                           price3mlOrig: '',
@@ -1422,7 +1426,17 @@ export default function App() {
                     <div className="border-t border-stone-100 pt-4 space-y-3">
                       <span className="text-[10px] font-bold text-stone-700 uppercase tracking-wider block">Pricing details</span>
                       {newProduct.productType === 'combo' ? (
-                        <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_2fr] gap-4">
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">Orig Price (Rs.)</label>
+                            <input
+                              type="number"
+                              placeholder="e.g. 700"
+                              value={newProduct.comboOrigPrice}
+                              onChange={e => setNewProduct({ ...newProduct, comboOrigPrice: e.target.value })}
+                              className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                            />
+                          </div>
                           <div>
                             <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">Combo Price * (Rs.)</label>
                             <input
@@ -1438,10 +1452,8 @@ export default function App() {
                             <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">Combo Includes</label>
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                               {newProduct.comboItems.map((item, index) => (
-                                <input
+                                <select
                                   key={index}
-                                  type="text"
-                                  placeholder={`Attar ${index + 1}`}
                                   value={item}
                                   onChange={(e) => {
                                     const updatedItems = [...newProduct.comboItems];
@@ -1449,7 +1461,15 @@ export default function App() {
                                     setNewProduct({ ...newProduct, comboItems: updatedItems });
                                   }}
                                   className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
-                                />
+                                >
+                                  <option value="">Select Attar</option>
+                                  {products.filter(p => !isComboProduct(p)).map(p => (
+                                    <option key={p.id} value={p.name}>{p.name}</option>
+                                  ))}
+                                  {item && !products.some(p => p.name === item) && (
+                                    <option value={item}>{item}</option>
+                                  )}
+                                </select>
                               ))}
                             </div>
                           </div>
@@ -1593,6 +1613,7 @@ export default function App() {
                                       image: prod.image,
                                       images: prod.images || [prod.image],
                                       productType: isComboProduct(prod) ? 'combo' : 'regular',
+                                      comboOrigPrice: String(prod.price3mlorig || ''),
                                       comboPrice: String(prod.price3mloffer || ''),
                                       comboItems: extractComboItems(prod.description),
                                       price3mlOrig: String(prod.price3mlorig || ''),
