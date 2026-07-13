@@ -15,7 +15,8 @@ import {
   FiEdit3,
   FiList,
   FiLock,
-  FiImage
+  FiImage,
+  FiStar
 } from 'react-icons/fi';
 import Editor from './components/Editor';
 import { supabase } from './utils/supabase';
@@ -92,6 +93,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [banners, setBanners] = useState([]);
+  const [testimonials, setTestimonials] = useState([]);
   const [blogs, setBlogs] = useState([]);
   const [dbLoading, setDbLoading] = useState(false);
 
@@ -99,6 +101,7 @@ export default function App() {
   const [editingCategory, setEditingCategory] = useState(null);
   const [editingProduct, setEditingProduct] = useState(null);
   const [editingBanner, setEditingBanner] = useState(null);
+  const [editingTestimonial, setEditingTestimonial] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('All');
@@ -133,6 +136,7 @@ export default function App() {
     image: '',
     link: ''
   });
+  const [newTestimonial, setNewTestimonial] = useState({ name: '', role: '', text: '', image: '' });
 
   const [editingBlog, setEditingBlog] = useState(null);
   const [newBlog, setNewBlog] = useState({
@@ -146,6 +150,7 @@ export default function App() {
   const [showProductForm, setShowProductForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [showBannerForm, setShowBannerForm] = useState(false);
+  const [showTestimonialForm, setShowTestimonialForm] = useState(false);
   const [showBlogForm, setShowBlogForm] = useState(false);
   const [selectedCategoryDetails, setSelectedCategoryDetails] = useState(null);
 
@@ -194,6 +199,7 @@ export default function App() {
       fetchProducts(),
       fetchOrders(),
       fetchBanners(),
+      fetchTestimonials(),
       fetchBlogs()
     ]);
     setDbLoading(false);
@@ -235,6 +241,11 @@ export default function App() {
       .order('created_at', { ascending: false });
     if (error) console.error("Error banners fetch:", error.message);
     else if (data) setBanners(data);
+  };
+
+  const fetchTestimonials = async () => {
+    const { data, error } = await supabase.from('testimonials').select('*').order('created_at', { ascending: false });
+    if (!error && data) setTestimonials(data);
   };
 
   const fetchBlogs = async () => {
@@ -605,6 +616,26 @@ export default function App() {
     fetchBanners();
   };
 
+  const handleAddTestimonial = async (e) => {
+    e.preventDefault();
+    if (!newTestimonial.name || !newTestimonial.text) return;
+    if (editingTestimonial) {
+      await supabase.from('testimonials').update({ name: newTestimonial.name, role: newTestimonial.role, text: newTestimonial.text, image: newTestimonial.image }).eq('id', editingTestimonial.id);
+      setEditingTestimonial(null);
+    } else {
+      await supabase.from('testimonials').insert([{ name: newTestimonial.name, role: newTestimonial.role, text: newTestimonial.text, image: newTestimonial.image }]);
+    }
+    setNewTestimonial({ name: '', role: '', text: '', image: '' });
+    setShowTestimonialForm(false);
+    fetchTestimonials();
+  };
+
+  const handleDeleteTestimonial = async (id) => {
+    if (!confirm('Delete testimonial?')) return;
+    await supabase.from('testimonials').delete().eq('id', id);
+    fetchTestimonials();
+  };
+
   // Delete handlers
   const handleDeleteProduct = async (id) => {
     if (!confirm("Are you sure you want to delete this product?")) return;
@@ -761,6 +792,47 @@ export default function App() {
     return matchesSearch && matchesStatus;
   });
 
+
+  const renderTestimonials = () => (
+    <div className="space-y-6 animate-fadeIn">
+      <div className="flex justify-between items-center pb-4 border-b border-stone-200">
+        <div><h2 className="text-xl font-serif font-bold text-stone-900">Testimonials</h2><p className="text-xs text-stone-500 mt-1">Manage client testimonials</p></div>
+        <button onClick={() => { setEditingTestimonial(null); setNewTestimonial({name:'', role:'', text:'', image:''}); setShowTestimonialForm(true); }} className="flex items-center gap-2 px-4 py-2 bg-[#8c6239] text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-[#7a5531] transition-colors"><FiPlus size={12}/> Add Testimonial</button>
+      </div>
+      {showTestimonialForm && (
+        <form onSubmit={handleAddTestimonial} className="bg-stone-50 p-6 rounded border border-stone-200 space-y-4">
+          <h3 className="text-sm font-bold uppercase tracking-widest text-stone-800">{editingTestimonial ? 'Edit' : 'Add'} Testimonial</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="block text-[10px] font-bold uppercase tracking-widest text-stone-500 mb-2">Name</label><input type="text" required value={newTestimonial.name} onChange={e => setNewTestimonial({...newTestimonial, name: e.target.value})} className="w-full px-3 py-2 bg-white border border-stone-200 rounded text-xs focus:outline-none focus:border-[#8c6239]" placeholder="Client Name" /></div>
+            <div><label className="block text-[10px] font-bold uppercase tracking-widest text-stone-500 mb-2">Role/Title</label><input type="text" value={newTestimonial.role} onChange={e => setNewTestimonial({...newTestimonial, role: e.target.value})} className="w-full px-3 py-2 bg-white border border-stone-200 rounded text-xs focus:outline-none focus:border-[#8c6239]" placeholder="e.g. Verified Buyer" /></div>
+          </div>
+          <div><label className="block text-[10px] font-bold uppercase tracking-widest text-stone-500 mb-2">Review Text</label><textarea required value={newTestimonial.text} onChange={e => setNewTestimonial({...newTestimonial, text: e.target.value})} className="w-full px-3 py-2 bg-white border border-stone-200 rounded text-xs focus:outline-none focus:border-[#8c6239]" rows="3" placeholder="Testimonial content..."></textarea></div>
+          <div><label className="block text-[10px] font-bold uppercase tracking-widest text-stone-500 mb-2">Client Image (Optional)</label>
+            <input type="file" accept="image/*" onChange={async (e) => {
+              if (e.target.files[0]) {
+                const url = await handleImageUpload(e.target.files[0], 'testimonials');
+                if (url) setNewTestimonial({...newTestimonial, image: url});
+              }
+            }} className="w-full text-xs" />
+            {newTestimonial.image && <img src={newTestimonial.image} alt="Preview" className="h-16 mt-2 rounded object-cover" />}
+          </div>
+          <div className="flex justify-end gap-3 pt-4"><button type="button" onClick={() => setShowTestimonialForm(false)} className="px-4 py-2 bg-stone-200 text-stone-700 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-stone-300">Cancel</button><button type="submit" disabled={uploading} className="px-4 py-2 bg-[#8c6239] text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-[#7a5531]">{uploading ? '...' : 'Save'}</button></div>
+        </form>
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {testimonials.map(t => (
+          <div key={t.id} className="bg-white border border-stone-200 rounded p-4 flex gap-4 items-start shadow-sm">
+            {t.image ? <img src={t.image} className="w-12 h-12 rounded-full object-cover border border-stone-200" /> : <div className="w-12 h-12 rounded-full bg-stone-100 flex items-center justify-center border border-stone-200"><FiStar className="text-stone-400" /></div>}
+            <div className="flex-1">
+              <h4 className="text-sm font-bold text-stone-900">{t.name}</h4><p className="text-[10px] text-[#8c6239] uppercase tracking-widest">{t.role}</p><p className="text-xs text-stone-600 mt-2 italic line-clamp-3">"{t.text}"</p>
+              <div className="flex gap-2 mt-4"><button onClick={() => { setEditingTestimonial(t); setNewTestimonial({ name: t.name, role: t.role||'', text: t.text, image: t.image||'' }); setShowTestimonialForm(true); }} className="text-[10px] uppercase tracking-widest font-bold text-stone-500 hover:text-[#8c6239]">Edit</button><button onClick={() => handleDeleteTestimonial(t.id)} className="text-[10px] uppercase tracking-widest font-bold text-red-500 hover:text-red-700">Delete</button></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   if (authLoading && !user) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-stone-50">
@@ -884,7 +956,7 @@ export default function App() {
     <div className="flex h-screen bg-stone-50 text-stone-900 overflow-hidden font-sans">
 
       {/* Sidebar */}
-      <aside className="w-64 bg-black text-white flex flex-col justify-between flex-shrink-0">
+      <aside className="w-64 bg-black text-white flex flex-col justify-between shrink-0">
         <div>
           <div className="p-6 border-b border-stone-950 flex flex-col items-center gap-1">
             <span className="text-xl font-bold tracking-[0.25em] text-white">MAAZ OUD</span>
@@ -899,6 +971,7 @@ export default function App() {
               { id: 'orders', name: 'Orders Listing', icon: <FiPackage size={18} /> },
               { id: 'banners', name: 'Promotion Banners', icon: <FiImage size={18} /> },
               { id: 'blogs', name: 'Manage Blogs', icon: <FiList size={18} /> },
+              { id: 'testimonials', name: 'Testimonials', icon: <FiStar size={18} /> },
             ].map((item) => (
               <button
                 key={item.id}
@@ -931,7 +1004,7 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-hidden">
 
         {/* Header */}
-        <header className="h-20 bg-white border-b border-stone-200 flex items-center justify-between px-8 flex-shrink-0">
+        <header className="h-20 bg-white border-b border-stone-200 flex items-center justify-between px-8 shrink-0">
           <div>
             <h1 className="text-lg font-bold uppercase tracking-wider text-stone-900">
               {activeTab === 'dashboard' && 'Dashboard Overview'}
@@ -940,6 +1013,7 @@ export default function App() {
               {activeTab === 'orders' && 'Recent Orders'}
               {activeTab === 'banners' && 'Promotion Banners'}
               {activeTab === 'blogs' && 'Blog Management'}
+              {activeTab === 'testimonials' && 'Testimonials'}
             </h1>
             <p className="text-[10px] text-stone-400 uppercase tracking-widest mt-0.5">Control and monitor your attar business</p>
           </div>
@@ -954,14 +1028,14 @@ export default function App() {
 
         {/* Loading Spinner */}
         {dbLoading ? (
-          <div className="flex-grow flex items-center justify-center bg-stone-50">
+          <div className="grow flex items-center justify-center bg-stone-50">
             <div className="flex flex-col items-center gap-3">
               <div className="w-8 h-8 border-2 border-stone-300 border-t-[#8c6239] rounded-full animate-spin"></div>
               <span className="text-xs text-stone-400 uppercase tracking-widest">Loading Database...</span>
             </div>
           </div>
         ) : (
-          <main className="flex-grow overflow-y-auto p-8">
+          <main className="grow overflow-y-auto p-8">
 
             {/* TAB 1: DASHBOARD */}
             {activeTab === 'dashboard' && (
@@ -1201,7 +1275,7 @@ export default function App() {
                           <p className="text-[10px] text-stone-400 font-light block leading-normal">Check the products you want to show under this category:</p>
 
                           {products.length > 0 ? (
-                            <div className="space-y-2 border border-stone-100 rounded p-3 bg-stone-50/50 max-h-[300px] overflow-y-auto">
+                            <div className="space-y-2 border border-stone-100 rounded p-3 bg-stone-50/50 max-h-75 overflow-y-auto">
                               {products.map(prod => {
                                 const isChecked = Array.isArray(prod.category)
                                   ? prod.category.includes(selectedCategoryDetails.id)
@@ -1554,7 +1628,7 @@ export default function App() {
                           <tr key={prod.id} className="border-b border-stone-200 hover:bg-stone-50/50 transition-colors">
                             <td className="p-4">
                               <div className="flex items-center gap-3">
-                                <div className="relative w-9 h-11 border border-stone-200 rounded overflow-hidden flex-shrink-0 bg-white">
+                                <div className="relative w-9 h-11 border border-stone-200 rounded overflow-hidden shrink-0 bg-white">
                                   <img src={prod.image} className="w-full h-full object-cover" alt="" />
                                   {prod.images && prod.images.length > 1 && (
                                     <span className="absolute bottom-0 right-0 bg-black/75 text-white font-mono text-[7px] px-1 font-bold">
@@ -1691,7 +1765,10 @@ export default function App() {
                           ? 'text-amber-700 border-amber-200 bg-amber-50'
                           : 'text-stone-700 border-stone-200 bg-white';
 
-                    return (
+                    
+
+
+  return (
                       <button
                         key={status}
                         type="button"
@@ -2151,7 +2228,11 @@ export default function App() {
               </div>
             )}
 
+          
+            {/* TAB 7: TESTIMONIALS */}
+            {activeTab === 'testimonials' && renderTestimonials()}
           </main>
+
         )}
       </div>
 
@@ -2258,14 +2339,14 @@ export default function App() {
                         <img
                           src={item.product?.image || "/images/placeholder.jpg"}
                           alt=""
-                          className="w-8 h-10 object-cover rounded border border-stone-200 bg-stone-50 flex-shrink-0"
+                          className="w-8 h-10 object-cover rounded border border-stone-200 bg-stone-50 shrink-0"
                         />
                         <div className="min-w-0 flex-1">
                           <span className="font-semibold text-stone-900 block truncate">{item.product?.name || "Attar Scent"}</span>
                           <span className="text-[10px] text-stone-400 block mt-0.5">Size: {item.selectedSize || "3ml"} &bull; Price: Rs. {item.price}</span>
                         </div>
                       </div>
-                      <div className="text-right pl-2 flex-shrink-0">
+                      <div className="text-right pl-2 shrink-0">
                         <span className="text-stone-500 block">Qty: {item.quantity}</span>
                         <span className="font-bold text-stone-900 block mt-0.5">Rs. {item.price * item.quantity}</span>
                       </div>
