@@ -9,6 +9,7 @@ import {
   FiPlus,
   FiTrash2,
   FiCheckCircle,
+  FiXCircle,
   FiClock,
   FiLogOut,
   FiFolder,
@@ -782,8 +783,8 @@ export default function App() {
     if (counts[status] !== undefined) counts[status] += 1;
     counts.All += 1;
     return counts;
-  }, { All: 0, Processing: 0, Shipped: 0, Delivered: 0 });
-  const orderStatusFilters = ['All', 'Processing', 'Shipped', 'Delivered'];
+  }, { All: 0, Processing: 0, Shipped: 0, Delivered: 0, Cancelled: 0 });
+  const orderStatusFilters = ['All', 'Processing', 'Shipped', 'Delivered', 'Cancelled'];
 
   const filteredOrders = orders.filter(order => {
     const query = orderSearchQuery.toLowerCase().trim();
@@ -1763,7 +1764,9 @@ export default function App() {
                         ? 'text-blue-700 border-blue-200 bg-blue-50'
                         : status === 'Processing'
                           ? 'text-amber-700 border-amber-200 bg-amber-50'
-                          : 'text-stone-700 border-stone-200 bg-white';
+                          : status === 'Cancelled'
+                            ? 'text-red-700 border-red-200 bg-red-50'
+                            : 'text-stone-700 border-stone-200 bg-white';
 
                     
 
@@ -1835,27 +1838,42 @@ export default function App() {
                                   ? 'bg-green-100 text-green-800'
                                   : order.status === 'Shipped'
                                     ? 'bg-blue-100 text-blue-800'
-                                    : 'bg-yellow-100 text-yellow-800'
+                                    : order.status === 'Cancelled'
+                                      ? 'bg-red-100 text-red-800'
+                                      : 'bg-yellow-100 text-yellow-800'
                                 }`}>
                                 {order.status}
                               </span>
                             </td>
                             <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-center gap-2">
-                                <button
-                                  onClick={() => requestOrderStatusUpdate(order, 'Shipped')}
-                                  className="p-1.5 bg-stone-50 hover:bg-blue-50 text-blue-600 border border-stone-200 hover:border-blue-300 rounded transition-colors cursor-pointer"
-                                  title="Mark as Shipped"
-                                >
-                                  <FiClock size={12} />
-                                </button>
-                                <button
-                                  onClick={() => requestOrderStatusUpdate(order, 'Delivered')}
-                                  className="p-1.5 bg-stone-50 hover:bg-green-50 text-green-600 border border-stone-200 hover:border-green-300 rounded transition-colors cursor-pointer"
-                                  title="Mark as Delivered"
-                                >
-                                  <FiCheckCircle size={12} />
-                                </button>
+                                {order.status !== 'Shipped' && order.status !== 'Delivered' && order.status !== 'Cancelled' && (
+                                  <button
+                                    onClick={() => requestOrderStatusUpdate(order, 'Shipped')}
+                                    className="p-1.5 bg-stone-50 hover:bg-blue-50 text-blue-600 border border-stone-200 hover:border-blue-300 rounded transition-colors cursor-pointer"
+                                    title="Mark as Shipped"
+                                  >
+                                    <FiClock size={12} />
+                                  </button>
+                                )}
+                                {order.status !== 'Delivered' && order.status !== 'Cancelled' && (
+                                  <button
+                                    onClick={() => requestOrderStatusUpdate(order, 'Delivered')}
+                                    className="p-1.5 bg-stone-50 hover:bg-green-50 text-green-600 border border-stone-200 hover:border-green-300 rounded transition-colors cursor-pointer"
+                                    title="Mark as Delivered"
+                                  >
+                                    <FiCheckCircle size={12} />
+                                  </button>
+                                )}
+                                {order.status !== 'Delivered' && order.status !== 'Cancelled' && (
+                                  <button
+                                    onClick={() => requestOrderStatusUpdate(order, 'Cancelled')}
+                                    className="p-1.5 bg-stone-50 hover:bg-red-50 text-red-650 border border-stone-200 hover:border-red-300 rounded transition-colors cursor-pointer"
+                                    title="Cancel Order"
+                                  >
+                                    <FiXCircle size={12} />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -2268,7 +2286,9 @@ export default function App() {
                       ? 'bg-green-100 text-green-800'
                       : selectedOrder.status === 'Shipped'
                         ? 'bg-blue-100 text-blue-800'
-                        : 'bg-yellow-100 text-yellow-800'
+                        : selectedOrder.status === 'Cancelled'
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-yellow-100 text-yellow-800'
                     }`}>
                     {selectedOrder.status}
                   </span>
@@ -2391,7 +2411,7 @@ export default function App() {
             {/* Footer Actions */}
             <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-between items-center gap-3">
               <div className="flex gap-2">
-                {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && (
+                {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && (
                   <button
                     onClick={() => requestOrderStatusUpdate(selectedOrder, 'Shipped')}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
@@ -2399,12 +2419,20 @@ export default function App() {
                     Mark Shipped
                   </button>
                 )}
-                {selectedOrder.status !== 'Delivered' && (
+                {selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && (
                   <button
                     onClick={() => requestOrderStatusUpdate(selectedOrder, 'Delivered')}
                     className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
                   >
                     Mark Delivered
+                  </button>
+                )}
+                {selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && (
+                  <button
+                    onClick={() => requestOrderStatusUpdate(selectedOrder, 'Cancelled')}
+                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
+                  >
+                    Cancel Order
                   </button>
                 )}
               </div>
@@ -2453,8 +2481,13 @@ export default function App() {
               <button
                 type="button"
                 onClick={confirmOrderStatusUpdate}
-                className={`rounded px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-white cursor-pointer ${pendingStatusUpdate.newStatus === 'Delivered' ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
+                className={`rounded px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-white cursor-pointer ${
+                  pendingStatusUpdate.newStatus === 'Delivered'
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : pendingStatusUpdate.newStatus === 'Cancelled'
+                      ? 'bg-red-600 hover:bg-red-700'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                }`}
               >
                 Confirm {pendingStatusUpdate.newStatus}
               </button>
