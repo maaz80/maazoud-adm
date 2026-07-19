@@ -40,6 +40,8 @@ const getWhatsAppLink = (order) => {
     text = `Hello ${order.customer_name},\n\nGreat news! Your order for ${itemsStr} (Rs. ${amount}) has been successfully shipped. Your approximate delivery date is ${formattedDeliveryDate}.\n\nThank you for shopping with Maaz Oud!`;
   } else if (status === "Delivered") {
     text = `Hello ${order.customer_name},\n\nCongratulations! Your order for ${itemsStr} (Rs. ${amount}) has been successfully delivered. We hope you enjoy the fragrance!\n\nIf you loved our attars, we would be incredibly grateful if you could take a moment to leave a review on our website. Your feedback means the world to us!\n\nThank you for shopping with Maaz Oud!`;
+  } else if (status === "Cancelled") {
+    text = `Hello ${order.customer_name},\n\nWe would like to inform you that your order for ${itemsStr} (Rs. ${amount}) has been cancelled.\n\nIf you have any questions or would like to re-order, feel free to contact us.\n\nThank you,\nMaaz Oud`;
   } else {
     text = `Hello ${order.customer_name},\n\nYour order for ${itemsStr} is currently marked as ${status}.`;
   }
@@ -107,6 +109,29 @@ export default function App() {
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('All');
   const [pendingStatusUpdate, setPendingStatusUpdate] = useState(null);
+
+  const [sentMessages, setSentMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem('admin_sent_messages');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
+  const markMessageAsSent = (orderId, status) => {
+    const key = status === 'Placed' ? 'Processing' : status;
+    const updated = {
+      ...sentMessages,
+      [orderId]: {
+        ...(sentMessages[orderId] || {}),
+        [key]: true,
+        [status]: true
+      }
+    };
+    setSentMessages(updated);
+    localStorage.setItem('admin_sent_messages', JSON.stringify(updated));
+  };
 
   // Forms state
   const [newProduct, setNewProduct] = useState({
@@ -1814,7 +1839,34 @@ export default function App() {
                             <td className="p-4">
                               <span className="font-bold text-stone-850 block">{order.customer_name}</span>
                               <span className="text-[10px] text-stone-450 font-mono block mt-0.5">{order.phone}</span>
-                              <span className="text-[9px] text-stone-400 block max-w-xs truncate mt-0.5" title={order.address}>{order.address}</span>
+                              
+                              {/* Sent messages indicators */}
+                              <div className="flex gap-1 mt-1">
+                                <span className={`text-[8px] font-bold px-1 py-0.5 rounded border uppercase leading-none ${
+                                  sentMessages[order.id]?.['Processing'] || sentMessages[order.id]?.['Placed']
+                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                    : 'bg-stone-50 text-stone-400 border-stone-100'
+                                }`} title="Placed Message Status">
+                                  Placed
+                                </span>
+                                <span className={`text-[8px] font-bold px-1 py-0.5 rounded border uppercase leading-none ${
+                                  sentMessages[order.id]?.['Shipped']
+                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                    : 'bg-stone-50 text-stone-400 border-stone-100'
+                                }`} title="Shipped Message Status">
+                                  Ship
+                                </span>
+                                {order.status === 'Cancelled' && (
+                                  <span className={`text-[8px] font-bold px-1 py-0.5 rounded border uppercase leading-none ${
+                                    sentMessages[order.id]?.['Cancelled']
+                                      ? 'bg-red-50 text-red-700 border-red-200'
+                                      : 'bg-stone-50 text-stone-400 border-stone-100'
+                                  }`} title="Cancelled Message Status">
+                                    Cancel
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[9px] text-stone-400 block max-w-xs truncate mt-1.5" title={order.address}>{order.address}</span>
                             </td>
                             <td className="p-4 space-y-2 max-w-xs">
                               {order.items && order.items.map((item, idx) => (
@@ -2319,6 +2371,7 @@ export default function App() {
                         href={getWhatsAppLink(selectedOrder)}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => markMessageAsSent(selectedOrder.id, selectedOrder.status)}
                         className="inline-flex items-center justify-center bg-green-500 hover:bg-green-600 text-white rounded p-1 transition-colors"
                         title="Message on WhatsApp"
                       >
@@ -2326,6 +2379,17 @@ export default function App() {
                           <path d="M13.601 2.326A7.854 7.854 0 0 0 7.994 0C3.627 0 .068 3.558.064 7.926c0 1.399.366 2.76 1.057 3.965L0 16l4.204-1.102a7.933 7.933 0 0 0 3.79.965h.004c4.368 0 7.926-3.558 7.93-7.93A7.898 7.898 0 0 0 13.6 2.326zM7.994 14.521a6.573 6.573 0 0 1-3.356-.92l-.24-.144-2.494.654.666-2.433-.156-.251a6.56 6.56 0 0 1-1.007-3.505c0-3.626 2.957-6.584 6.591-6.584a6.56 6.56 0 0 1 4.66 1.931 6.557 6.557 0 0 1 1.928 4.66c-.004 3.639-2.961 6.592-6.592 6.592zm3.615-4.934c-.197-.099-1.17-.578-1.353-.646-.182-.065-.315-.099-.445.099-.133.197-.513.646-.627.775-.114.133-.232.148-.43.05-.197-.1-.836-.308-1.592-.985-.59-.525-.985-1.175-1.103-1.372-.114-.198-.011-.304.088-.403.087-.088.197-.232.296-.346.1-.114.133-.198.198-.33.065-.134.034-.248-.015-.347-.05-.099-.445-1.076-.612-1.47-.16-.389-.323-.335-.445-.34-.114-.007-.247-.007-.38-.007a.729.729 0 0 0-.529.247c-.182.198-.691.677-.691 1.654 0 .977.71 1.916.81 2.049.098.133 1.394 2.132 3.383 2.992.47.205.84.326 1.129.418.475.152.904.129 1.246.08.38-.058 1.171-.48 1.338-.943.164-.464.164-.86.114-.943-.049-.084-.182-.133-.38-.232z"/>
                         </svg>
                       </a>
+                      
+                      {/* Check if message has been sent for this status */}
+                      {sentMessages[selectedOrder.id]?.[selectedOrder.status === 'Placed' ? 'Processing' : selectedOrder.status] ? (
+                        <span className="text-[9px] bg-green-50 border border-green-200 text-green-700 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider flex items-center gap-0.5">
+                          ✓ {selectedOrder.status === 'Processing' || selectedOrder.status === 'Placed' ? 'Placed' : selectedOrder.status} MSG Sent
+                        </span>
+                      ) : (
+                        <span className="text-[9px] bg-stone-100 border border-stone-200 text-stone-500 px-1.5 py-0.5 rounded font-medium uppercase tracking-wider">
+                          Pending MSG
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="md:col-span-2">
