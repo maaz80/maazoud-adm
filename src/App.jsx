@@ -58,12 +58,21 @@ const getWhatsAppLink = (order) => {
 const ADMIN_EMAIL = 'maazforlap@gmail.com';
 const COMBO_PRODUCT_MARKER = '<!-- product-type:combo -->';
 const isComboProduct = (product) => String(product?.description || '').includes(COMBO_PRODUCT_MARKER);
-const cleanProductDescription = (description = '') => String(description || '').replace(COMBO_PRODUCT_MARKER, '').trim();
+const cleanProductDescription = (description = '') => {
+  if (!description) return '';
+  let str = String(description).replace(/<!-- product-type:combo -->/gi, '');
+  str = str.replace(/<p[^>]*>\s*(?:<strong[^>]*>)?\s*Combo includes:[\s\S]*?<\/p>/gi, '');
+  str = str.replace(/<div[^>]*>\s*(?:<strong[^>]*>)?\s*Combo includes:[\s\S]*?<\/div>/gi, '');
+  str = str.replace(/(?:Combo includes:[^.<>]+(?:\.|\s*))+/gi, '');
+  return str.trim();
+};
 const extractComboItems = (description = '') => {
   const text = String(description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  const match = text.match(/Combo includes:\s*(.+)/i);
-  if (!match) return ['', '', ''];
-  return match[1].split(',').map((item) => item.trim()).slice(0, 3).concat(['', '', '']).slice(0, 3);
+  const match = text.match(/Combo includes:\s*(.*?)(?:Combo includes:|$)/i);
+  if (!match || !match[1]) return ['', '', ''];
+  const itemsStr = match[1].trim().replace(/\.$/, '');
+  const items = itemsStr.split(',').map((item) => item.trim()).filter(Boolean);
+  return items.slice(0, 3).concat(['', '', '']).slice(0, 3);
 };
 const withProductTypeMarker = (description = '', productType = 'regular') => {
   const cleanDescription = cleanProductDescription(description || '<p>Premium pure attar formulation.</p>');
@@ -78,6 +87,7 @@ const buildProductDescription = (description = '', productType = 'regular', comb
   const body = `${cleanDescription}${cleanDescription ? ' ' : ''}${comboHtml}`.trim();
   return `${COMBO_PRODUCT_MARKER}${body}`;
 };
+
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -1720,7 +1730,7 @@ export default function App() {
                                       price3mlOffer: String(prod.price3mloffer || ''),
                                       price6mlOrig: String(prod.price6mlorig || ''),
                                       price6mlOffer: String(prod.price6mloffer || ''),
-                                      description: prod.description || ''
+                                      description: cleanProductDescription(prod.description || '')
                                     });
                                     setShowProductForm(true);
                                   }}
