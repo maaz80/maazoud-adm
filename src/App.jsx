@@ -190,6 +190,24 @@ export default function App() {
   const [showBlogForm, setShowBlogForm] = useState(false);
   const [selectedCategoryDetails, setSelectedCategoryDetails] = useState(null);
 
+  // Shiprocket integration states
+  const [showShiprocketModal, setShowShiprocketModal] = useState(false);
+  const [shiprocketOrderId, setShiprocketOrderId] = useState('');
+  const [shiprocketWeight, setShiprocketWeight] = useState('0.5');
+  const [shiprocketLength, setShiprocketLength] = useState('10');
+  const [shiprocketWidth, setShiprocketWidth] = useState('10');
+  const [shiprocketHeight, setShiprocketHeight] = useState('10');
+  const [courierRates, setCourierRates] = useState([]);
+  const [fetchingRates, setFetchingRates] = useState(false);
+  const [rateError, setRateError] = useState('');
+  const [selectedCourier, setSelectedCourier] = useState(null);
+  const [initializingShipment, setInitializingShipment] = useState(false);
+  const [shipmentError, setShipmentError] = useState('');
+
+  // Sales and profit modal states
+  const [showSalesListModal, setShowSalesListModal] = useState(false);
+  const [showProfitListModal, setShowProfitListModal] = useState(false);
+
   // Check Auth Session on Mount
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -811,7 +829,304 @@ export default function App() {
     }
   };
 
+  const getBackendUrl = () => {
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return 'http://localhost:3000';
+    }
+    return 'https://www.maazoud.in';
+  };
+
+  const handleFetchCourierRates = async (e) => {
+    if (e) e.preventDefault();
+    setRateError('');
+    setCourierRates([]);
+    setSelectedCourier(null);
+    setFetchingRates(true);
+
+    const order = orders.find(o => o.id === shiprocketOrderId);
+    if (!order) {
+      setRateError("Order details not found locally.");
+      setFetchingRates(false);
+      return;
+    }
+
+    try {
+      const backendUrl = getBackendUrl();
+      const isCod = order.payment_method.toLowerCase().includes('cod') || order.payment_method.toLowerCase().includes('cash on delivery');
+      
+      const session = (await supabase.auth.getSession()).data.session;
+      const res = await fetch(`${backendUrl}/api/shipping-rates`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`
+        },
+        body: JSON.stringify({
+          action: 'get_rates',
+          delivery_pincode: order.pincode,
+          weight: shiprocketWeight,
+          length: shiprocketLength,
+          width: shiprocketWidth,
+          height: shiprocketHeight,
+          is_cod: isCod
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to fetch courier rates.");
+      }
+
+      setCourierRates(data.couriers || []);
+    } catch (err) {
+      console.error(err);
+      setRateError(err.message || "An unexpected error occurred while fetching rates.");
+    } finally {
+      setFetchingRates(false);
+    }
+  };
+
+  const handleInitializeShipment = async () => {
+    if (!selectedCourier) {
+      alert("Please select a courier partner first.");
+      return;
+    }
+
+    setShipmentError('');
+    setInitializingShipment(true);
+
+    try {
+      const backendUrl = getBackendUrl();
+      const session = (await supabase.auth.getSession()).data.session;
+      const res = await fetch(`${backendUrl}/api/shipping-rates`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`
+        },
+        body: JSON.stringify({
+          action: 'create_shipment',
+          order_id: shiprocketOrderId,
+          courier_id: selectedCourier.courier_company_id,
+          weight: shiprocketWeight,
+          length: shiprocketLength,
+          width: shiprocketWidth,
+          height: shiprocketHeight
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to book shipment.");
+      }
+
+      alert("Shipment initialized successfully! AWB: " + data.shiprocket_awb);
+      setShowShiprocketModal(false);
+      
+      // Refresh local order listing
+      await fetchOrders();
+
+      // Update currently open order modal if open
+      if (selectedOrder && selectedOrder.id === shiprocketOrderId) {
+        const { data: updatedOrder, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('id', shiprocketOrderId)
+          .single();
+        if (!error && updatedOrder) {
+          setSelectedOrder(updatedOrder);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      setShipmentError(err.message || "Failed to book shipment.");
+    } finally {
+      setInitializingShipment(false);
+    }
+  };
+
+  const calculateOrderProfit = (order, productsList) => {
+    if (order.status === 'Cancelled') {
+      return { baseCost: 0, deliveryCost: 0, sellingPrice: 0, profit: 0, itemsProfit: [] };
+    }
+
+    const isCombo = (prodId, prodName) => {
+      const prod = productsList.find(p => p.id === prodId);
+      if (prod && String(prod.description || '').includes('<!-- product-type:combo -->')) {
+        return true;
+      }
+      return String(prodName || '').toLowerCase().includes('combo') || String(prodId || '').toLowerCase().includes('combo');
+    };
+
+    let totalBaseCost = 0;
+    const itemsProfit = (order.items || []).map(item => {
+      const prodId = item.product?.id;
+      const prodName = item.product?.name;
+      const qty = parseInt(item.quantity) || 1;
+      const size = String(item.selectedSize || '3ml').toLowerCase();
+      
+      let unitCost = 100; // default 3ml
+      if (isCombo(prodId, prodName)) {
+        unitCost = 177;
+      } else if (size === '6ml') {
+        unitCost = 156;
+      } else {
+        unitCost = 100;
+      }
+
+      const itemBaseCost = unitCost * qty;
+      totalBaseCost += itemBaseCost;
+
+      return {
+        name: prodName,
+        size: size,
+        quantity: qty,
+        sellingPrice: item.price * qty,
+        baseCost: itemBaseCost,
+        profit: (item.price * qty) - itemBaseCost
+      };
+    });
+
+    const deliveryCost = parseFloat(order.shiprocket_charge) || 50; 
+    const sellingPrice = parseFloat(order.total_amount) || 0;
+    const netProfit = sellingPrice - (totalBaseCost + deliveryCost);
+
+    return {
+      baseCost: totalBaseCost,
+      deliveryCost,
+      sellingPrice,
+      profit: netProfit,
+      itemsProfit
+    };
+  };
+
+  const handleDownloadSalesProfitReport = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert("Please allow popups to download report!");
+      return;
+    }
+    
+    const nonCancelled = orders.filter(o => o.status !== 'Cancelled');
+    let totalSales = 0;
+    let totalBaseCost = 0;
+    let totalDeliveryCost = 0;
+    let totalProfit = 0;
+
+    const tableRows = nonCancelled.map(order => {
+      const { baseCost, deliveryCost, sellingPrice, profit } = calculateOrderProfit(order, products);
+      totalSales += sellingPrice;
+      totalBaseCost += baseCost;
+      totalDeliveryCost += deliveryCost;
+      totalProfit += profit;
+
+      return `
+        <tr>
+          <td style="font-family: monospace; font-weight: bold;">${order.id}</td>
+          <td>${new Date(order.created_at).toLocaleDateString()}</td>
+          <td>${order.customer_name}</td>
+          <td>Rs. ${sellingPrice}</td>
+          <td>Rs. ${baseCost}</td>
+          <td>Rs. ${deliveryCost}</td>
+          <td style="font-weight: bold; color: ${profit >= 0 ? '#16a34a' : '#dc2626'}">Rs. ${profit}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const htmlContent = `
+      <html>
+        <head>
+          <title>Sales and Profit Report - Maaz Oud</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1c1917; margin: 40px; line-height: 1.5; }
+            h1 { font-family: Georgia, serif; text-align: center; color: #1c1917; margin-bottom: 5px; font-size: 26px; }
+            .subtitle { text-align: center; font-size: 11px; text-transform: uppercase; letter-spacing: 3px; color: #8c6239; margin-bottom: 35px; font-weight: bold; }
+            .summary-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 35px; }
+            .card { background: #faf8f5; border: 1px solid #e7e5e4; padding: 18px; border-radius: 8px; text-align: center; }
+            .card-title { font-size: 9px; text-transform: uppercase; color: #78716c; letter-spacing: 1.5px; margin-bottom: 8px; font-weight: bold; }
+            .card-value { font-size: 20px; font-weight: bold; color: #1c1917; }
+            table { width: 100%; border-collapse: collapse; margin-top: 25px; font-size: 12px; }
+            th { background: #1c1917; color: white; text-align: left; padding: 12px; text-transform: uppercase; font-size: 9px; letter-spacing: 1.5px; }
+            td { padding: 12px; border-bottom: 1px solid #e7e5e4; }
+            tr:nth-child(even) { background-color: #faf8f5; }
+            .footer { margin-top: 60px; text-align: center; font-size: 10px; color: #a8a29e; border-top: 1px solid #e7e5e4; padding-top: 20px; }
+            .print-btn-container { text-align: right; margin-bottom: 25px; }
+            .print-btn { background: #8c6239; color: white; border: none; padding: 10px 20px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1.5px; border-radius: 4px; cursor: pointer; transition: background 0.2s; }
+            .print-btn:hover { background: #7a5531; }
+            @media print {
+              .print-btn-container { display: none; }
+              body { margin: 20px; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="print-btn-container">
+            <button class="print-btn" onclick="window.print()">Download / Print PDF</button>
+          </div>
+          <h1>MAAZ OUD</h1>
+          <div class="subtitle">Financial Sales & Profit Report</div>
+          
+          <div class="summary-cards">
+            <div class="card">
+              <div class="card-title">Total Sales Count</div>
+              <div class="card-value">${nonCancelled.length} Orders</div>
+            </div>
+            <div class="card">
+              <div class="card-title">Gross Sales Value</div>
+              <div class="card-value">Rs. ${totalSales}</div>
+            </div>
+            <div class="card">
+              <div class="card-title">Total Product & Deliv Cost</div>
+              <div class="card-value">Rs. ${totalBaseCost + totalDeliveryCost}</div>
+            </div>
+            <div class="card">
+              <div class="card-title">Net Profit Margin</div>
+              <div class="card-value" style="color: #16a34a">Rs. ${totalProfit}</div>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Date</th>
+                <th>Customer Name</th>
+                <th>Sale Price</th>
+                <th>Base Cost</th>
+                <th>Delivery Cost</th>
+                <th>Net Profit</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+
+          <div class="footer">
+            Generated on ${new Date().toLocaleString()} &bull; Maaz Oud Administrative Controls
+          </div>
+          <script>
+            window.onload = function() {
+              setTimeout(function() { window.print(); }, 500);
+            }
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+  };
+
   const totalRevenue = orders.reduce((sum, o) => sum + (o.status === 'Delivered' ? (o.total_amount || 0) : 0), 0);
+  
+  const nonCancelledOrders = orders.filter(o => o.status !== 'Cancelled');
+  const calculatedSalesTotal = nonCancelledOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+  const calculatedProfitTotal = nonCancelledOrders.reduce((sum, o) => {
+    const { profit } = calculateOrderProfit(o, products);
+    return sum + profit;
+  }, 0);
+
   const getOrderStatus = (order) => order.status || 'Processing';
   const orderStatusCounts = orders.reduce((counts, order) => {
     const status = getOrderStatus(order);
@@ -1075,25 +1390,94 @@ export default function App() {
 
             {/* TAB 1: DASHBOARD */}
             {activeTab === 'dashboard' && (
-              <div className="space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                  {[
-                    { name: "Total Orders", value: orderStatusCounts.All, icon: <FiList className="text-[#8c6239]" size={24} />, desc: "All customer orders" },
-                    { name: "Processing Orders", value: orderStatusCounts.Processing, icon: <FiClock className="text-amber-600" size={24} />, desc: "New orders to pack" },
-                    { name: "Shipped Orders", value: orderStatusCounts.Shipped, icon: <FiPackage className="text-blue-600" size={24} />, desc: "Orders sent for delivery" },
-                    { name: "Delivered Orders", value: orderStatusCounts.Delivered, icon: <FiCheckCircle className="text-green-600" size={24} />, desc: `Delivered revenue Rs. ${totalRevenue}` },
-                  ].map((stat, i) => (
-                    <div key={i} className="bg-white border border-stone-200 p-6 rounded-md shadow-sm space-y-4">
-                      <div className="flex justify-between items-start">
-                        <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">{stat.name}</span>
-                        {stat.icon}
-                      </div>
-                      <div>
-                        <h3 className="text-2xl font-bold text-stone-900">{stat.value}</h3>
-                        <p className="text-[10px] text-stone-500 font-light mt-1">{stat.desc}</p>
-                      </div>
+              <div className="space-y-8 animate-fadeIn">
+                <div className="flex justify-between items-center pb-4 border-b border-stone-200">
+                  <div>
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-[#8c6239]">Performance & Sales Report</h3>
+                    <p className="text-[10px] text-stone-400 mt-1">Financial summary and courier tracking metrics</p>
+                  </div>
+                  <button
+                    onClick={handleDownloadSalesProfitReport}
+                    className="bg-[#8c6239] hover:bg-stone-900 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-widest rounded transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
+                  >
+                    Download Financial Report (PDF)
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-5">
+                  <div className="bg-white border border-stone-200 p-5 rounded-md shadow-sm space-y-3">
+                    <div className="flex justify-between items-start">
+                      <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total Orders</span>
+                      <FiList className="text-[#8c6239]" size={20} />
                     </div>
-                  ))}
+                    <div>
+                      <h3 className="text-xl font-bold text-stone-900">{orderStatusCounts.All}</h3>
+                      <p className="text-[9px] text-stone-500 font-light mt-0.5">All customer orders</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-stone-200 p-5 rounded-md shadow-sm space-y-3">
+                    <div className="flex justify-between items-start">
+                      <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Processing Orders</span>
+                      <FiClock className="text-amber-600" size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-stone-900">{orderStatusCounts.Processing}</h3>
+                      <p className="text-[9px] text-stone-500 font-light mt-0.5">New orders to pack</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-stone-200 p-5 rounded-md shadow-sm space-y-3">
+                    <div className="flex justify-between items-start">
+                      <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Shipped Orders</span>
+                      <FiPackage className="text-blue-600" size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-stone-900">{orderStatusCounts.Shipped}</h3>
+                      <p className="text-[9px] text-stone-500 font-light mt-0.5">Sent for delivery</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-stone-200 p-5 rounded-md shadow-sm space-y-3">
+                    <div className="flex justify-between items-start">
+                      <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Delivered Orders</span>
+                      <FiCheckCircle className="text-green-600" size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-stone-900">{orderStatusCounts.Delivered}</h3>
+                      <p className="text-[9px] text-stone-500 font-light mt-0.5">Successful orders</p>
+                    </div>
+                  </div>
+
+                  <div 
+                    onClick={() => setShowSalesListModal(true)}
+                    className="bg-white border border-stone-200 p-5 rounded-md shadow-sm space-y-3 cursor-pointer hover:border-[#8c6239] transition-all hover:bg-stone-50/80"
+                    title="Click to view all sales orders"
+                  >
+                    <div className="flex justify-between items-start">
+                      <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total Sales</span>
+                      <FiTrendingUp className="text-[#8c6239]" size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-[#8c6239]">Rs. {calculatedSalesTotal}</h3>
+                      <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Sales List &rarr;</p>
+                    </div>
+                  </div>
+
+                  <div 
+                    onClick={() => setShowProfitListModal(true)}
+                    className="bg-white border border-stone-200 p-5 rounded-md shadow-sm space-y-3 cursor-pointer hover:border-[#8c6239] transition-all hover:bg-stone-50/80"
+                    title="Click to view net profit breakdown"
+                  >
+                    <div className="flex justify-between items-start">
+                      <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total Profit</span>
+                      <FiStar className="text-green-600" size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-green-600">Rs. {calculatedProfitTotal}</h3>
+                      <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Profit List &rarr;</p>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -2480,11 +2864,66 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Shiprocket Tracking Card */}
+              {selectedOrder.shiprocket_awb && (
+                <div className="bg-purple-50 p-4 rounded border border-purple-200 text-xs space-y-2 mt-4">
+                  <div className="flex justify-between items-center border-b border-purple-100 pb-2">
+                    <span className="text-[10px] uppercase font-bold text-purple-750 tracking-wider">Shiprocket Tracking Details</span>
+                    <span className="text-[9px] uppercase font-bold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full">{selectedOrder.shiprocket_status || 'Shipped'}</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Courier Partner</span>
+                      <span className="font-semibold text-stone-900 block">{selectedOrder.shiprocket_courier_name}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">AWB (Tracking Number)</span>
+                      <span className="font-semibold text-stone-900 font-mono block">{selectedOrder.shiprocket_awb}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Shipment Charge</span>
+                      <span className="font-semibold text-stone-900 block">Rs. {selectedOrder.shiprocket_charge}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Track Online</span>
+                      <a 
+                        href={`https://shiprocket.co/tracking/${selectedOrder.shiprocket_awb}`} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="text-purple-600 font-bold hover:underline block"
+                      >
+                        View Live Tracking &rarr;
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
 
             {/* Footer Actions */}
             <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-between items-center gap-3">
               <div className="flex gap-2">
+                {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && !selectedOrder.shiprocket_awb && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShiprocketOrderId(selectedOrder.id);
+                      setCourierRates([]);
+                      setSelectedCourier(null);
+                      setRateError('');
+                      setShipmentError('');
+                      setShiprocketWeight('0.5');
+                      setShiprocketLength('10');
+                      setShiprocketWidth('10');
+                      setShiprocketHeight('10');
+                      setShowShiprocketModal(true);
+                    }}
+                    className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
+                  >
+                    Ship with Shiprocket
+                  </button>
+                )}
                 {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && (
                   <button
                     onClick={() => requestOrderStatusUpdate(selectedOrder, 'Shipped')}
@@ -2564,6 +3003,292 @@ export default function App() {
                 }`}
               >
                 Confirm {pendingStatusUpdate.newStatus}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shiprocket Rate Calculator & Initialization Modal */}
+      {showShiprocketModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
+          <div className="relative bg-white rounded-lg max-w-lg w-full shadow-2xl overflow-hidden border border-stone-200">
+            
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div>
+                <span className="text-[9px] uppercase font-bold text-purple-750 tracking-widest block">Shiprocket Integration</span>
+                <h3 className="text-sm font-bold text-stone-900 font-mono">Initialize Shipment: {shiprocketOrderId}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShiprocketModal(false)}
+                className="p-1.5 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer text-lg font-bold"
+                disabled={initializingShipment}
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              {rateError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded">
+                  {rateError}
+                </div>
+              )}
+              {shipmentError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded">
+                  {shipmentError}
+                </div>
+              )}
+
+              {/* Package Dimensions & Weight */}
+              <div className="bg-stone-50 p-4 rounded border border-stone-200 space-y-3">
+                <span className="text-[10px] font-bold text-stone-700 uppercase tracking-wider block">Package Specifications</span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[9px] font-bold text-stone-500 uppercase tracking-wider mb-1">Weight (kg)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={shiprocketWeight}
+                      onChange={e => setShiprocketWeight(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded p-1.5 text-xs text-stone-900 focus:outline-none focus:border-purple-500"
+                      disabled={fetchingRates || initializingShipment}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-stone-500 uppercase tracking-wider mb-1">Length (cm)</label>
+                    <input
+                      type="number"
+                      min="0.5"
+                      required
+                      value={shiprocketLength}
+                      onChange={e => setShiprocketLength(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded p-1.5 text-xs text-stone-900 focus:outline-none focus:border-purple-500"
+                      disabled={fetchingRates || initializingShipment}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-stone-500 uppercase tracking-wider mb-1">Width (cm)</label>
+                    <input
+                      type="number"
+                      min="0.5"
+                      required
+                      value={shiprocketWidth}
+                      onChange={e => setShiprocketWidth(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded p-1.5 text-xs text-stone-900 focus:outline-none focus:border-purple-500"
+                      disabled={fetchingRates || initializingShipment}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-stone-500 uppercase tracking-wider mb-1">Height (cm)</label>
+                    <input
+                      type="number"
+                      min="0.5"
+                      required
+                      value={shiprocketHeight}
+                      onChange={e => setShiprocketHeight(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded p-1.5 text-xs text-stone-900 focus:outline-none focus:border-purple-500"
+                      disabled={fetchingRates || initializingShipment}
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={handleFetchCourierRates}
+                    disabled={fetchingRates || initializingShipment}
+                    className="bg-[#8c6239] hover:bg-purple-600 text-white text-[10px] font-bold uppercase tracking-wider px-4 py-2 rounded transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {fetchingRates ? "Calculating Rates..." : "Calculate Courier Rates"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Courier Selection List */}
+              {courierRates.length > 0 && (
+                <div className="space-y-2">
+                  <span className="text-[10px] font-bold text-stone-700 uppercase tracking-wider block">Select Shipping Partner (Cheapest First)</span>
+                  <div className="border border-stone-200 rounded divide-y divide-stone-100 overflow-hidden max-h-60 overflow-y-auto">
+                    {courierRates.map((courier, idx) => (
+                      <div
+                        key={courier.courier_company_id || idx}
+                        onClick={() => !initializingShipment && setSelectedCourier(courier)}
+                        className={`p-3 flex justify-between items-center text-xs transition-colors cursor-pointer ${
+                          selectedCourier?.courier_company_id === courier.courier_company_id
+                            ? 'bg-purple-50 border-l-4 border-purple-500'
+                            : 'bg-white hover:bg-stone-50'
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <span className="font-bold text-stone-850 block">{courier.courier_name}</span>
+                          <span className="text-[10px] text-stone-400 block font-light">ETD: {courier.etd} &bull; Rating: {courier.rating}/5</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-bold text-purple-700 block">Rs. {courier.rate}</span>
+                          {idx === 0 && <span className="text-[8px] bg-emerald-100 text-emerald-800 uppercase font-bold tracking-wider px-1.5 py-0.5 rounded block mt-0.5 w-fit ml-auto">Best Rate</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowShiprocketModal(false)}
+                className="px-4 py-2 border border-stone-200 text-stone-700 bg-white hover:bg-stone-100 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all disabled:opacity-50"
+                disabled={initializingShipment}
+              >
+                Cancel
+              </button>
+              {selectedCourier && (
+                <button
+                  type="button"
+                  onClick={handleInitializeShipment}
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all disabled:opacity-50"
+                  disabled={initializingShipment}
+                >
+                  {initializingShipment ? "Booking shipment..." : `Confirm & Ship (Rs. ${selectedCourier.rate})`}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sales List Modal */}
+      {showSalesListModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
+          <div className="relative bg-white rounded-lg max-w-3xl w-full shadow-2xl overflow-hidden border border-stone-200 animate-fadeIn">
+            
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div>
+                <span className="text-[9px] uppercase font-bold text-stone-500 tracking-widest block">Financial Summary</span>
+                <h3 className="text-sm font-bold text-stone-900">Total Sales List ({nonCancelledOrders.length} Orders)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSalesListModal(false)}
+                className="p-1.5 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer text-lg font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 overflow-y-auto max-h-[60vh] space-y-4">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-stone-100 border-b border-stone-200 text-stone-500 uppercase tracking-wider font-bold">
+                    <th className="p-3">Order ID</th>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Customer</th>
+                    <th className="p-3">Payment</th>
+                    <th className="p-3 text-right">Sale Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {nonCancelledOrders.map(order => (
+                    <tr key={order.id} className="border-b border-stone-150 hover:bg-stone-50/50 transition-colors">
+                      <td className="p-3 font-mono font-bold text-stone-900">{order.id}</td>
+                      <td className="p-3 text-stone-500">{new Date(order.created_at).toLocaleDateString()}</td>
+                      <td className="p-3 text-stone-800">{order.customer_name}</td>
+                      <td className="p-3 text-stone-500 truncate max-w-40" title={order.payment_method}>
+                        {order.payment_method.includes('Payment ID') ? 'Razorpay' : 'COD'}
+                      </td>
+                      <td className="p-3 text-right font-bold text-stone-900">Rs. {order.total_amount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-between items-center">
+              <span className="text-xs font-bold text-[#8c6239]">Total Sales: Rs. {calculatedSalesTotal}</span>
+              <button
+                type="button"
+                onClick={() => setShowSalesListModal(false)}
+                className="px-4 py-2 bg-stone-900 hover:bg-stone-850 text-white text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profit List Modal */}
+      {showProfitListModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
+          <div className="relative bg-white rounded-lg max-w-4xl w-full shadow-2xl overflow-hidden border border-stone-200 animate-fadeIn">
+            
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div>
+                <span className="text-[9px] uppercase font-bold text-green-700 tracking-widest block">Financial Profitability</span>
+                <h3 className="text-sm font-bold text-stone-900">Net Profit Breakdown List</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowProfitListModal(false)}
+                className="p-1.5 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer text-lg font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 overflow-y-auto max-h-[60vh] space-y-4">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-stone-100 border-b border-stone-200 text-stone-500 uppercase tracking-wider font-bold">
+                    <th className="p-3">Order ID</th>
+                    <th className="p-3">Customer</th>
+                    <th className="p-3 text-right">Selling Price</th>
+                    <th className="p-3 text-right">Base Cost</th>
+                    <th className="p-3 text-right">Delivery Cost</th>
+                    <th className="p-3 text-right">Net Profit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {nonCancelledOrders.map(order => {
+                    const { baseCost, deliveryCost, sellingPrice, profit } = calculateOrderProfit(order, products);
+                    return (
+                      <tr key={order.id} className="border-b border-stone-150 hover:bg-stone-50/50 transition-colors">
+                        <td className="p-3 font-mono font-bold text-stone-900">{order.id}</td>
+                        <td className="p-3 text-stone-800">{order.customer_name}</td>
+                        <td className="p-3 text-right text-stone-900">Rs. {sellingPrice}</td>
+                        <td className="p-3 text-right text-stone-500">Rs. {baseCost}</td>
+                        <td className="p-3 text-right text-stone-500">Rs. {deliveryCost}</td>
+                        <td className={`p-3 text-right font-bold ${profit >= 0 ? 'text-green-600' : 'text-red-650'}`}>
+                          Rs. {profit}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-between items-center">
+              <span className="text-xs font-bold text-green-700">Total Net Profit: Rs. {calculatedProfitTotal}</span>
+              <button
+                type="button"
+                onClick={() => setShowProfitListModal(false)}
+                className="px-4 py-2 bg-stone-900 hover:bg-stone-850 text-white text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
+              >
+                Close
               </button>
             </div>
           </div>
