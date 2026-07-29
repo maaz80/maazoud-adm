@@ -203,6 +203,8 @@ export default function App() {
   const [selectedCourier, setSelectedCourier] = useState(null);
   const [initializingShipment, setInitializingShipment] = useState(false);
   const [shipmentError, setShipmentError] = useState('');
+  const [generatingLabel, setGeneratingLabel] = useState(false);
+  const [generatingManifest, setGeneratingManifest] = useState(false);
 
   // Sales and profit modal states
   const [showSalesListModal, setShowSalesListModal] = useState(false);
@@ -942,6 +944,80 @@ export default function App() {
       setShipmentError(err.message || "Failed to book shipment.");
     } finally {
       setInitializingShipment(false);
+    }
+  };
+
+  const handleDownloadLabel = async (order) => {
+    if (!order.shiprocket_shipment_id) {
+      alert("No Shiprocket Shipment ID found for this order. Cannot generate label.");
+      return;
+    }
+    setGeneratingLabel(true);
+    try {
+      const backendUrl = getBackendUrl();
+      const session = (await supabase.auth.getSession()).data.session;
+      const res = await fetch(`${backendUrl}/api/shipping-rates`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`
+        },
+        body: JSON.stringify({
+          action: 'generate_label',
+          shipment_id: order.shiprocket_shipment_id
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to generate label.");
+      }
+      if (data.label_url) {
+        window.open(data.label_url, '_blank');
+      } else {
+        alert("Label URL not available. Please try again.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to generate shipping label.");
+    } finally {
+      setGeneratingLabel(false);
+    }
+  };
+
+  const handleDownloadManifest = async (order) => {
+    if (!order.shiprocket_shipment_id) {
+      alert("No Shiprocket Shipment ID found for this order. Cannot generate manifest.");
+      return;
+    }
+    setGeneratingManifest(true);
+    try {
+      const backendUrl = getBackendUrl();
+      const session = (await supabase.auth.getSession()).data.session;
+      const res = await fetch(`${backendUrl}/api/shipping-rates`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`
+        },
+        body: JSON.stringify({
+          action: 'generate_manifest',
+          shipment_id: order.shiprocket_shipment_id
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to generate manifest.");
+      }
+      if (data.manifest_url) {
+        window.open(data.manifest_url, '_blank');
+      } else {
+        alert("Manifest URL not available. Please try again.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to generate manifest.");
+    } finally {
+      setGeneratingManifest(false);
     }
   };
 
@@ -2895,6 +2971,32 @@ export default function App() {
                         View Live Tracking &rarr;
                       </a>
                     </div>
+                  </div>
+                  <div className="flex gap-2 pt-2 border-t border-purple-100 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadLabel(selectedOrder)}
+                      disabled={generatingLabel}
+                      className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all flex items-center gap-1.5"
+                    >
+                      {generatingLabel ? (
+                        <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full"></span> Generating…</>
+                      ) : (
+                        <>📄 Download Label</>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadManifest(selectedOrder)}
+                      disabled={generatingManifest}
+                      className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all flex items-center gap-1.5"
+                    >
+                      {generatingManifest ? (
+                        <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full"></span> Generating…</>
+                      ) : (
+                        <>📋 Download Manifest</>
+                      )}
+                    </button>
                   </div>
                 </div>
               )}
