@@ -1022,7 +1022,9 @@ export default function App() {
   };
 
   const calculateOrderProfit = (order, productsList) => {
-    if (order.status === 'Cancelled') {
+    // Only calculate net profit if the order has been shipped or delivered (when actual delivery charges occur)
+    const isShippedOrDelivered = order.status === 'Shipped' || order.status === 'Delivered';
+    if (!isShippedOrDelivered) {
       return { baseCost: 0, deliveryCost: 0, sellingPrice: 0, profit: 0, itemsProfit: [] };
     }
 
@@ -1063,7 +1065,7 @@ export default function App() {
       };
     });
 
-    const deliveryCost = parseFloat(order.shiprocket_charge) || 50; 
+    const deliveryCost = parseFloat(order.shiprocket_charge) || 40; 
     const sellingPrice = parseFloat(order.total_amount) || 0;
     const netProfit = sellingPrice - (totalBaseCost + deliveryCost);
 
@@ -2924,18 +2926,38 @@ export default function App() {
                 <div className="space-y-2 text-xs">
                   <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Billing Total</span>
                   <div className="bg-stone-50 p-3 rounded border border-stone-200 space-y-1.5 text-stone-750">
-                    <div className="flex justify-between">
-                      <span>Subtotal:</span>
-                      <span className="font-semibold text-stone-900">Rs. {selectedOrder.total_amount - 50}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Delivery Charges:</span>
-                      <span className="font-semibold text-stone-900">Rs. 50</span>
-                    </div>
-                    <div className="flex justify-between border-t border-stone-200 pt-1.5 font-bold text-stone-900">
-                      <span>Total Amount Paid:</span>
-                      <span className="text-[#8c6239]">Rs. {selectedOrder.total_amount}</span>
-                    </div>
+                    {(() => {
+                      const items = selectedOrder.items || [];
+                      const itemsSubtotal = items.reduce((sum, item) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
+                      const isCod = String(selectedOrder.payment_method || '').toLowerCase().includes('cod');
+                      const codFee = isCod ? 30 : 0;
+                      const deliveryCharge = 40;
+                      // Fallback if itemsSubtotal is 0 or legacy data structure
+                      const actualSubtotal = itemsSubtotal > 0 ? itemsSubtotal : (selectedOrder.total_amount - deliveryCharge - codFee);
+
+                      return (
+                        <>
+                          <div className="flex justify-between">
+                            <span>Subtotal:</span>
+                            <span className="font-semibold text-stone-900">Rs. {actualSubtotal}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Delivery Charges:</span>
+                            <span className="font-semibold text-stone-900">Rs. {deliveryCharge}</span>
+                          </div>
+                          {isCod && (
+                            <div className="flex justify-between">
+                              <span>COD Fee:</span>
+                              <span className="font-semibold text-stone-900">Rs. {codFee}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between border-t border-stone-200 pt-1.5 font-bold text-stone-900">
+                            <span>Total Amount Paid:</span>
+                            <span className="text-[#8c6239]">Rs. {selectedOrder.total_amount}</span>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
