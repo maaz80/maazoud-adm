@@ -911,6 +911,7 @@ export default function App() {
           action: 'create_shipment',
           order_id: shiprocketOrderId,
           courier_id: selectedCourier.courier_company_id,
+          courier_rate: selectedCourier.rate,
           weight: shiprocketWeight,
           length: shiprocketLength,
           width: shiprocketWidth,
