@@ -2980,7 +2980,15 @@ export default function App() {
                     </div>
                     <div>
                       <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Shipment Charge</span>
-                      <span className="font-semibold text-stone-900 block">Rs. {selectedOrder.shiprocket_charge}</span>
+                      <span className="font-semibold text-stone-900 block">
+                        Rs. {selectedOrder.shiprocket_charge && Number(selectedOrder.shiprocket_charge) > 0 
+                          ? selectedOrder.shiprocket_charge 
+                          : (() => {
+                              const itemsSub = (selectedOrder.items || []).reduce((acc, item) => acc + (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1), 0);
+                              const computedShipping = (parseFloat(selectedOrder.total_amount) || 0) - itemsSub;
+                              return computedShipping > 0 ? computedShipping : (selectedOrder.shipping_charge || selectedOrder.delivery_charge || 0);
+                            })()}
+                      </span>
                     </div>
                     <div>
                       <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Track Online</span>
