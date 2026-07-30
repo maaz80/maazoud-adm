@@ -197,6 +197,7 @@ export default function App() {
   const [shiprocketLength, setShiprocketLength] = useState('10');
   const [shiprocketWidth, setShiprocketWidth] = useState('10');
   const [shiprocketHeight, setShiprocketHeight] = useState('10');
+  const [shiprocketPickupDate, setShiprocketPickupDate] = useState(new Date().toISOString().split('T')[0]);
   const [courierRates, setCourierRates] = useState([]);
   const [fetchingRates, setFetchingRates] = useState(false);
   const [rateError, setRateError] = useState('');
@@ -913,7 +914,8 @@ export default function App() {
           weight: shiprocketWeight,
           length: shiprocketLength,
           width: shiprocketWidth,
-          height: shiprocketHeight
+          height: shiprocketHeight,
+          pickup_date: shiprocketPickupDate
         })
       });
 
@@ -3178,7 +3180,7 @@ export default function App() {
               {/* Package Dimensions & Weight */}
               <div className="bg-stone-50 p-4 rounded border border-stone-200 space-y-3">
                 <span className="text-[10px] font-bold text-stone-700 uppercase tracking-wider block">Package Specifications</span>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div>
                     <label className="block text-[9px] font-bold text-stone-500 uppercase tracking-wider mb-1">Weight (kg)</label>
                     <input
@@ -3224,6 +3226,18 @@ export default function App() {
                       required
                       value={shiprocketHeight}
                       onChange={e => setShiprocketHeight(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded p-1.5 text-xs text-stone-900 focus:outline-none focus:border-purple-500"
+                      disabled={fetchingRates || initializingShipment}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-stone-500 uppercase tracking-wider mb-1">Pickup Date</label>
+                    <input
+                      type="date"
+                      min={new Date().toISOString().split('T')[0]}
+                      required
+                      value={shiprocketPickupDate}
+                      onChange={e => setShiprocketPickupDate(e.target.value)}
                       className="w-full bg-white border border-stone-200 rounded p-1.5 text-xs text-stone-900 focus:outline-none focus:border-purple-500"
                       disabled={fetchingRates || initializingShipment}
                     />
