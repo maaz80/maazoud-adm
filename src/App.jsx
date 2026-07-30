@@ -1067,7 +1067,7 @@ export default function App() {
       };
     });
 
-    const deliveryCost = parseFloat(order.shiprocket_charge) || 40; 
+    const deliveryCost = parseFloat(order.shiprocket_charge) || 0; 
     const sellingPrice = parseFloat(order.total_amount) || 0;
     const netProfit = sellingPrice - (totalBaseCost + deliveryCost);
 
