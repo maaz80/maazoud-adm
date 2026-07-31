@@ -211,6 +211,25 @@ export default function App() {
   const [showSalesListModal, setShowSalesListModal] = useState(false);
   const [showProfitListModal, setShowProfitListModal] = useState(false);
 
+  // Manual / Offline order states
+  const [showManualOrderModal, setShowManualOrderModal] = useState(false);
+  const [manualCustomerName, setManualCustomerName] = useState('');
+  const [manualPhone, setManualPhone] = useState('');
+  const [manualPaymentMethod, setManualPaymentMethod] = useState('Cash (Offline)');
+  const [manualStatus, setManualStatus] = useState('Delivered');
+  const [manualSelectedProductId, setManualSelectedProductId] = useState('');
+  const [manualSelectedSize, setManualSelectedSize] = useState('3ml');
+  const [manualQuantity, setManualQuantity] = useState(1);
+  const [manualSellingPrice, setManualSellingPrice] = useState('');
+  const [manualBaseCost, setManualBaseCost] = useState('');
+  const [manualDeliveryCharge, setManualDeliveryCharge] = useState('0');
+  const [savingManualOrder, setSavingManualOrder] = useState(false);
+
+  // Inline Table Cell Editing State
+  const [inlineEditingCell, setInlineEditingCell] = useState(null); // { orderId, field }
+  const [inlineEditValue, setInlineEditValue] = useState('');
+  const [savingInlineEdit, setSavingInlineEdit] = useState(false);
+
   // Check Auth Session on Mount
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -1024,13 +1043,165 @@ export default function App() {
     }
   };
 
-  const calculateOrderProfit = (order, productsList) => {
-    // Only calculate net profit if the order has been shipped or delivered (when actual delivery charges occur)
-    const isShippedOrDelivered = order.status === 'Shipped' || order.status === 'Delivered';
-    if (!isShippedOrDelivered) {
-      return { baseCost: 0, deliveryCost: 0, sellingPrice: 0, profit: 0, itemsProfit: [] };
+  const handleUpdateDeliveryCharge = async (orderId, currentCharge) => {
+    const newChargeStr = prompt("Enter actual Shiprocket Delivery Charge (Rs.):", currentCharge || "");
+    if (newChargeStr === null) return;
+    const newCharge = parseFloat(newChargeStr);
+    if (isNaN(newCharge) || newCharge < 0) {
+      alert("Please enter a valid positive number.");
+      return;
+    }
+    const { error } = await supabase
+      .from('orders')
+      .update({ shiprocket_charge: newCharge })
+      .eq('id', orderId);
+    if (error) {
+      alert("Failed to update delivery charge: " + error.message);
+    } else {
+      alert("Delivery charge updated successfully to Rs. " + newCharge);
+      await fetchOrders();
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder(prev => ({ ...prev, shiprocket_charge: newCharge }));
+      }
+    }
+  };
+
+  const handleSaveInlineEdit = async (orderId, field, value) => {
+    const numVal = parseFloat(value);
+    if (isNaN(numVal) || numVal < 0) {
+      setInlineEditingCell(null);
+      return;
     }
 
+    let updateData = {};
+    if (field === 'sellingPrice') {
+      updateData = { manual_selling_price: numVal, total_amount: numVal };
+    } else if (field === 'baseCost') {
+      updateData = { manual_base_cost: numVal };
+    } else if (field === 'deliveryCost') {
+      updateData = { shiprocket_charge: numVal };
+    }
+
+    setSavingInlineEdit(true);
+    const { error } = await supabase.from('orders').update(updateData).eq('id', orderId);
+    if (!error) {
+      await fetchOrders();
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder(prev => ({ ...prev, ...updateData }));
+      }
+    }
+    setSavingInlineEdit(false);
+    setInlineEditingCell(null);
+  };
+
+  const handleUpdateSellingPrice = async (orderId, currentPrice) => {
+    const newPriceStr = prompt("Enter new Sale / Total Amount (Rs.):", currentPrice || "");
+    if (newPriceStr === null) return;
+    const newPrice = parseFloat(newPriceStr);
+    if (isNaN(newPrice) || newPrice < 0) {
+      alert("Please enter a valid positive number.");
+      return;
+    }
+    const { error } = await supabase
+      .from('orders')
+      .update({ manual_selling_price: newPrice, total_amount: newPrice })
+      .eq('id', orderId);
+    if (error) {
+      alert("Failed to update sale price: " + error.message);
+    } else {
+      alert("Sale price updated to Rs. " + newPrice);
+      await fetchOrders();
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder(prev => ({ ...prev, manual_selling_price: newPrice, total_amount: newPrice }));
+      }
+    }
+  };
+
+  const handleUpdateBaseCost = async (orderId, currentBaseCost) => {
+    const newCostStr = prompt("Enter new Product Base Cost (Rs.):", currentBaseCost || "");
+    if (newCostStr === null) return;
+    const newCost = parseFloat(newCostStr);
+    if (isNaN(newCost) || newCost < 0) {
+      alert("Please enter a valid positive number.");
+      return;
+    }
+    const { error } = await supabase
+      .from('orders')
+      .update({ manual_base_cost: newCost })
+      .eq('id', orderId);
+    if (error) {
+      alert("Failed to update base cost: " + error.message);
+    } else {
+      alert("Base cost updated to Rs. " + newCost);
+      await fetchOrders();
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder(prev => ({ ...prev, manual_base_cost: newCost }));
+      }
+    }
+  };
+
+  const handleCreateManualOrder = async (e) => {
+    if (e) e.preventDefault();
+    if (!manualCustomerName.trim()) {
+      alert("Please enter customer name.");
+      return;
+    }
+    const selectedProd = products.find(p => p.id === manualSelectedProductId) || products[0] || { id: 'manual-attar', name: 'Custom Attar', image: '' };
+    const itemPrice = parseFloat(manualSellingPrice) || 200;
+    const qty = parseInt(manualQuantity) || 1;
+    const totalAmount = itemPrice * qty;
+
+    const orderId = `ORD-OFFLINE-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const orderPayload = {
+      id: orderId,
+      customer_name: manualCustomerName.trim(),
+      phone: manualPhone.trim() || "N/A",
+      address: "In-Person Sale (Home / Offline)",
+      city: "Gorakhpur",
+      state: "Uttar Pradesh",
+      pincode: "273001",
+      payment_method: manualPaymentMethod,
+      total_amount: totalAmount,
+      status: manualStatus,
+      shiprocket_charge: parseFloat(manualDeliveryCharge) || 0,
+      manual_selling_price: totalAmount,
+      manual_base_cost: manualBaseCost ? parseFloat(manualBaseCost) : (manualSelectedSize === '6ml' ? 156 * qty : 100 * qty),
+      items: [{
+        product: {
+          id: selectedProd?.id || 'manual-attar',
+          name: selectedProd?.name || 'Pure Attar Formulation',
+          image: selectedProd?.image || ''
+        },
+        quantity: qty,
+        selectedSize: manualSelectedSize,
+        price: itemPrice
+      }],
+      created_at: new Date().toISOString()
+    };
+
+    setSavingManualOrder(true);
+    try {
+      const { error } = await supabase.from('orders').insert([orderPayload]);
+      if (error) {
+        throw new Error(error.message);
+      }
+      alert("Manual order created successfully! Order ID: " + orderId);
+      setShowManualOrderModal(false);
+      setManualCustomerName('');
+      setManualPhone('');
+      setManualSellingPrice('');
+      setManualBaseCost('');
+      await fetchOrders();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to create manual order: " + err.message);
+    } finally {
+      setSavingManualOrder(false);
+    }
+  };
+
+  const calculateOrderProfit = (order, productsList) => {
     const isCombo = (prodId, prodName) => {
       const prod = productsList.find(p => p.id === prodId);
       if (prod && String(prod.description || '').includes('<!-- product-type:combo -->')) {
@@ -1062,20 +1233,38 @@ export default function App() {
         name: prodName,
         size: size,
         quantity: qty,
-        sellingPrice: item.price * qty,
+        sellingPrice: (item.price || 0) * qty,
         baseCost: itemBaseCost,
-        profit: (item.price * qty) - itemBaseCost
+        profit: ((item.price || 0) * qty) - itemBaseCost
       };
     });
 
-    const deliveryCost = parseFloat(order.shiprocket_charge) || 0; 
-    const sellingPrice = parseFloat(order.total_amount) || 0;
-    const netProfit = sellingPrice - (totalBaseCost + deliveryCost);
+    if (order.manual_base_cost !== undefined && order.manual_base_cost !== null && !isNaN(Number(order.manual_base_cost))) {
+      totalBaseCost = parseFloat(order.manual_base_cost);
+    }
+
+    const sellingPrice = (order.manual_selling_price !== undefined && order.manual_selling_price !== null && !isNaN(Number(order.manual_selling_price)))
+      ? parseFloat(order.manual_selling_price)
+      : (parseFloat(order.total_amount) || 0);
+
+    let hasDeliveryCost = false;
+    let deliveryCost = 0;
+
+    if (order.shiprocket_charge !== null && order.shiprocket_charge !== undefined && !isNaN(Number(order.shiprocket_charge))) {
+      hasDeliveryCost = true;
+      deliveryCost = parseFloat(order.shiprocket_charge);
+    } else if (order.shipment_details?.assign_awb_response?.response?.data?.freight_charges) {
+      hasDeliveryCost = true;
+      deliveryCost = parseFloat(order.shipment_details.assign_awb_response.response.data.freight_charges);
+    }
+
+    const netProfit = hasDeliveryCost ? Number((sellingPrice - (totalBaseCost + deliveryCost)).toFixed(2)) : 0;
 
     return {
-      baseCost: totalBaseCost,
-      deliveryCost,
-      sellingPrice,
+      baseCost: Number(totalBaseCost.toFixed(2)),
+      deliveryCost: hasDeliveryCost ? Number(deliveryCost.toFixed(2)) : 0,
+      hasDeliveryCost,
+      sellingPrice: Number(sellingPrice.toFixed(2)),
       profit: netProfit,
       itemsProfit
     };
@@ -1113,6 +1302,11 @@ export default function App() {
         </tr>
       `;
     }).join('');
+
+    totalSales = Number(totalSales.toFixed(2));
+    totalBaseCost = Number(totalBaseCost.toFixed(2));
+    totalDeliveryCost = Number(totalDeliveryCost.toFixed(2));
+    totalProfit = Number(totalProfit.toFixed(2));
 
     const htmlContent = `
       <html>
@@ -1202,11 +1396,11 @@ export default function App() {
   const totalRevenue = orders.reduce((sum, o) => sum + (o.status === 'Delivered' ? (o.total_amount || 0) : 0), 0);
   
   const nonCancelledOrders = orders.filter(o => o.status !== 'Cancelled');
-  const calculatedSalesTotal = nonCancelledOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
-  const calculatedProfitTotal = nonCancelledOrders.reduce((sum, o) => {
+  const calculatedSalesTotal = Number(nonCancelledOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0).toFixed(2));
+  const calculatedProfitTotal = Number(nonCancelledOrders.reduce((sum, o) => {
     const { profit } = calculateOrderProfit(o, products);
     return sum + profit;
-  }, 0);
+  }, 0).toFixed(2));
 
   const getOrderStatus = (order) => order.status || 'Processing';
   const orderStatusCounts = orders.reduce((counts, order) => {
@@ -2228,9 +2422,18 @@ export default function App() {
             {activeTab === 'orders' && (
               <div className="space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <span className="text-xs uppercase font-bold tracking-wider text-stone-500">
-                    {filteredOrders.length} of {orders.length} Orders Shown
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs uppercase font-bold tracking-wider text-stone-500">
+                      {filteredOrders.length} of {orders.length} Orders Shown
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowManualOrderModal(true)}
+                      className="bg-[#8c6239] hover:bg-[#76512d] text-white text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded transition-all cursor-pointer flex items-center gap-1"
+                    >
+                      + Add Manual / Offline Order
+                    </button>
+                  </div>
 
                   {/* Search Bar */}
                   <div className="relative w-full sm:max-w-xs">
@@ -2982,15 +3185,20 @@ export default function App() {
                       <span className="font-semibold text-stone-900 font-mono block">{selectedOrder.shiprocket_awb}</span>
                     </div>
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Shipment Charge</span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Shipment Charge</span>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateDeliveryCharge(selectedOrder.id, selectedOrder.shiprocket_charge)}
+                          className="text-[9px] font-bold uppercase text-purple-700 hover:underline cursor-pointer"
+                        >
+                          [Edit Charge]
+                        </button>
+                      </div>
                       <span className="font-semibold text-stone-900 block">
                         Rs. {selectedOrder.shiprocket_charge && Number(selectedOrder.shiprocket_charge) > 0 
                           ? selectedOrder.shiprocket_charge 
-                          : (() => {
-                              const itemsSub = (selectedOrder.items || []).reduce((acc, item) => acc + (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1), 0);
-                              const computedShipping = (parseFloat(selectedOrder.total_amount) || 0) - itemsSub;
-                              return computedShipping > 0 ? computedShipping : (selectedOrder.shipping_charge || selectedOrder.delivery_charge || 0);
-                            })()}
+                          : (selectedOrder.shipment_details?.assign_awb_response?.response?.data?.freight_charges || 0)}
                       </span>
                     </div>
                     <div>
@@ -3065,6 +3273,37 @@ export default function App() {
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
                   >
                     Mark Shipped
+                  </button>
+                )}
+                {selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!confirm(`Deliver order ${selectedOrder.id} yourself (₹0 Delivery Cost)?`)) return;
+                      const { error } = await supabase
+                        .from('orders')
+                        .update({
+                          status: 'Delivered',
+                          shiprocket_charge: 0,
+                          shiprocket_courier_name: 'Hand Delivered (Direct / Local)'
+                        })
+                        .eq('id', selectedOrder.id);
+                      if (error) {
+                        alert("Failed to update order: " + error.message);
+                      } else {
+                        alert("Order marked as Hand-Delivered (₹0 Delivery Cost)!");
+                        await fetchOrders();
+                        setSelectedOrder(prev => ({
+                          ...prev,
+                          status: 'Delivered',
+                          shiprocket_charge: 0,
+                          shiprocket_courier_name: 'Hand Delivered (Direct / Local)'
+                        }));
+                      }
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
+                  >
+                    Self / Hand Deliver (₹0 Freight)
                   </button>
                 )}
                 {selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && (
@@ -3409,16 +3648,119 @@ export default function App() {
                 </thead>
                 <tbody>
                   {nonCancelledOrders.map(order => {
-                    const { baseCost, deliveryCost, sellingPrice, profit } = calculateOrderProfit(order, products);
+                    const { baseCost, deliveryCost, hasDeliveryCost, sellingPrice, profit } = calculateOrderProfit(order, products);
+
+                    const isEditingSelling = inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'sellingPrice';
+                    const isEditingBase = inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'baseCost';
+                    const isEditingDelivery = inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'deliveryCost';
+
                     return (
                       <tr key={order.id} className="border-b border-stone-150 hover:bg-stone-50/50 transition-colors">
                         <td className="p-3 font-mono font-bold text-stone-900">{order.id}</td>
                         <td className="p-3 text-stone-800">{order.customer_name}</td>
-                        <td className="p-3 text-right text-stone-900">Rs. {sellingPrice}</td>
-                        <td className="p-3 text-right text-stone-500">Rs. {baseCost}</td>
-                        <td className="p-3 text-right text-stone-500">Rs. {deliveryCost}</td>
-                        <td className={`p-3 text-right font-bold ${profit >= 0 ? 'text-green-600' : 'text-red-650'}`}>
-                          Rs. {profit}
+                        
+                        {/* Selling Price */}
+                        <td className="p-3 text-right">
+                          {isEditingSelling ? (
+                            <input
+                              type="number"
+                              autoFocus
+                              value={inlineEditValue}
+                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onBlur={() => handleSaveInlineEdit(order.id, 'sellingPrice', inlineEditValue)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveInlineEdit(order.id, 'sellingPrice', inlineEditValue);
+                                if (e.key === 'Escape') setInlineEditingCell(null);
+                              }}
+                              className="w-20 px-1.5 py-0.5 border-2 border-purple-500 rounded text-right font-bold text-xs bg-white text-purple-900 focus:outline-none"
+                            />
+                          ) : (
+                            <span
+                              onClick={() => {
+                                setInlineEditingCell({ orderId: order.id, field: 'sellingPrice' });
+                                setInlineEditValue(String(sellingPrice));
+                              }}
+                              className="cursor-pointer hover:bg-purple-100/70 hover:text-purple-800 px-2 py-1 rounded transition-colors font-semibold text-stone-900 border-b border-dashed border-stone-300 hover:border-purple-500"
+                              title="Click to edit Selling Price"
+                            >
+                              Rs. {sellingPrice}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Base Cost */}
+                        <td className="p-3 text-right">
+                          {isEditingBase ? (
+                            <input
+                              type="number"
+                              autoFocus
+                              value={inlineEditValue}
+                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onBlur={() => handleSaveInlineEdit(order.id, 'baseCost', inlineEditValue)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveInlineEdit(order.id, 'baseCost', inlineEditValue);
+                                if (e.key === 'Escape') setInlineEditingCell(null);
+                              }}
+                              className="w-20 px-1.5 py-0.5 border-2 border-purple-500 rounded text-right font-bold text-xs bg-white text-purple-900 focus:outline-none"
+                            />
+                          ) : (
+                            <span
+                              onClick={() => {
+                                setInlineEditingCell({ orderId: order.id, field: 'baseCost' });
+                                setInlineEditValue(String(baseCost));
+                              }}
+                              className="cursor-pointer hover:bg-purple-100/70 hover:text-purple-800 px-2 py-1 rounded transition-colors font-medium text-stone-600 border-b border-dashed border-stone-300 hover:border-purple-500"
+                              title="Click to edit Base Cost"
+                            >
+                              Rs. {baseCost}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Delivery Cost */}
+                        <td className="p-3 text-right">
+                          {isEditingDelivery ? (
+                            <input
+                              type="number"
+                              autoFocus
+                              value={inlineEditValue}
+                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onBlur={() => handleSaveInlineEdit(order.id, 'deliveryCost', inlineEditValue)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveInlineEdit(order.id, 'deliveryCost', inlineEditValue);
+                                if (e.key === 'Escape') setInlineEditingCell(null);
+                              }}
+                              className="w-20 px-1.5 py-0.5 border-2 border-purple-500 rounded text-right font-bold text-xs bg-white text-purple-900 focus:outline-none"
+                            />
+                          ) : (
+                            <span
+                              onClick={() => {
+                                setInlineEditingCell({ orderId: order.id, field: 'deliveryCost' });
+                                setInlineEditValue(hasDeliveryCost ? String(deliveryCost) : '0');
+                              }}
+                              className={`cursor-pointer px-2 py-1 rounded transition-colors border-b border-dashed ${
+                                hasDeliveryCost 
+                                  ? 'font-medium text-stone-600 border-stone-300 hover:bg-purple-100/70 hover:text-purple-800 hover:border-purple-500' 
+                                  : 'font-bold text-amber-700 bg-amber-50 border-amber-300 hover:bg-amber-100'
+                              }`}
+                              title="Click to set/edit Delivery Charge"
+                            >
+                              {hasDeliveryCost ? `Rs. ${deliveryCost}` : 'N/A'}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Net Profit */}
+                        <td className="p-3 text-right font-bold">
+                          {hasDeliveryCost ? (
+                            <span className={profit >= 0 ? 'text-green-600' : 'text-red-650'}>
+                              Rs. {profit}
+                            </span>
+                          ) : (
+                            <span className="text-stone-450 italic font-normal" title="Profit will calculate once delivery cost is set">
+                              Rs. 0 <span className="text-[9px] text-amber-600 not-italic">(Pending)</span>
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -3438,6 +3780,192 @@ export default function App() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual / Offline Order Creation Modal */}
+      {showManualOrderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fadeIn">
+          <div className="bg-white rounded-md border border-stone-200 shadow-2xl w-full max-w-lg overflow-hidden space-y-0">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-stone-200 bg-stone-50 flex justify-between items-center">
+              <div>
+                <span className="text-[9px] uppercase font-bold text-[#8c6239] tracking-widest block">Offline / In-Person Sale</span>
+                <h3 className="text-sm font-bold text-stone-900">Add Manual Order</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowManualOrderModal(false)}
+                className="p-1.5 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer text-lg font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Form Body */}
+            <form onSubmit={handleCreateManualOrder} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Customer Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Rahul Sharma"
+                    value={manualCustomerName}
+                    onChange={(e) => setManualCustomerName(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 9876543210"
+                    value={manualPhone}
+                    onChange={(e) => setManualPhone(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Select Product *
+                  </label>
+                  <select
+                    value={manualSelectedProductId}
+                    onChange={(e) => setManualSelectedProductId(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                  >
+                    <option value="">-- Select Product --</option>
+                    {products.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Size
+                  </label>
+                  <select
+                    value={manualSelectedSize}
+                    onChange={(e) => setManualSelectedSize(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                  >
+                    <option value="3ml">3ml Bottle</option>
+                    <option value="6ml">6ml Bottle</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Quantity
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={manualQuantity}
+                    onChange={(e) => setManualQuantity(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Selling Price (Rs.) *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    placeholder="e.g. 250"
+                    value={manualSellingPrice}
+                    onChange={(e) => setManualSellingPrice(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Base Cost (Rs.)
+                  </label>
+                  <input
+                    type="number"
+                    placeholder={manualSelectedSize === '6ml' ? '156' : '100'}
+                    value={manualBaseCost}
+                    onChange={(e) => setManualBaseCost(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Payment Method
+                  </label>
+                  <select
+                    value={manualPaymentMethod}
+                    onChange={(e) => setManualPaymentMethod(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                  >
+                    <option value="Cash (Offline)">Cash (Offline)</option>
+                    <option value="UPI / QR">UPI / QR Code</option>
+                    <option value="Google Pay">Google Pay</option>
+                    <option value="PhonePe">PhonePe</option>
+                    <option value="Paytm">Paytm</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Order Status
+                  </label>
+                  <select
+                    value={manualStatus}
+                    onChange={(e) => setManualStatus(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                  >
+                    <option value="Delivered">Delivered (Completed)</option>
+                    <option value="Processing">Processing (Pending)</option>
+                    <option value="Shipped">Shipped</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider mb-1">
+                    Delivery Cost (Rs.)
+                  </label>
+                  <input
+                    type="number"
+                    value={manualDeliveryCharge}
+                    onChange={(e) => setManualDeliveryCharge(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none font-semibold"
+                  />
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="pt-4 flex justify-end gap-3 border-t border-stone-200">
+                <button
+                  type="button"
+                  onClick={() => setShowManualOrderModal(false)}
+                  className="px-4 py-2 border border-stone-200 text-stone-700 bg-white hover:bg-stone-100 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingManualOrder}
+                  className="px-5 py-2 bg-[#8c6239] hover:bg-[#76512d] text-white text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all disabled:opacity-50"
+                >
+                  {savingManualOrder ? "Saving..." : "Save Manual Order"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
