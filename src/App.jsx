@@ -151,14 +151,16 @@ export default function App() {
     images: [],
     productType: 'regular',
     comboOrigPrice: '',
-    comboOrigPrice: '',
     comboPrice: '',
     comboItems: ['', '', ''],
     price3mlOrig: '',
     price3mlOffer: '',
     price6mlOrig: '',
     price6mlOffer: '',
-    description: ''
+    description: '',
+    isOutOfStock: false,
+    isOutOfStock3ml: false,
+    isOutOfStock6ml: false
   });
 
   const [newCategory, setNewCategory] = useState({
@@ -594,6 +596,15 @@ export default function App() {
       ? comboPrice
       : Number(newProduct.price6mlOffer || 0);
 
+    const stockPayload = {
+      is_out_of_stock: Boolean(newProduct.isOutOfStock),
+      is_out_of_stock_3ml: Boolean(newProduct.isOutOfStock3ml),
+      is_out_of_stock_6ml: Boolean(newProduct.isOutOfStock6ml),
+      in_stock: !Boolean(newProduct.isOutOfStock),
+      in_stock_3ml: !Boolean(newProduct.isOutOfStock3ml),
+      in_stock_6ml: !Boolean(newProduct.isOutOfStock6ml)
+    };
+
     if (editingProduct) {
       const { error } = await supabase
         .from('products')
@@ -606,7 +617,8 @@ export default function App() {
           price3mloffer: price3mlOfferValue,
           price6mlorig: price6mlOrigValue,
           price6mloffer: price6mlOfferValue,
-          description: description || "<p>Premium pure attar formulation.</p>"
+          description: description || "<p>Premium pure attar formulation.</p>",
+          ...stockPayload
         })
         .eq('id', editingProduct.id);
 
@@ -627,7 +639,8 @@ export default function App() {
         price3mloffer: price3mlOfferValue,
         price6mlorig: price6mlOrigValue,
         price6mloffer: price6mlOfferValue,
-        description: description || "<p>Premium pure attar formulation.</p>"
+        description: description || "<p>Premium pure attar formulation.</p>",
+        ...stockPayload
       };
 
       const { error } = await supabase.from('products').insert([productToAdd]);
@@ -644,14 +657,16 @@ export default function App() {
       images: [],
       productType: 'regular',
       comboOrigPrice: '',
-    comboOrigPrice: '',
-    comboPrice: '',
+      comboPrice: '',
       comboItems: ['', '', ''],
       price3mlOrig: '',
       price3mlOffer: '',
       price6mlOrig: '',
       price6mlOffer: '',
-      description: ''
+      description: '',
+      isOutOfStock: false,
+      isOutOfStock3ml: false,
+      isOutOfStock6ml: false
     });
     setShowProductForm(false);
     fetchProducts();
@@ -718,6 +733,31 @@ export default function App() {
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (error) {
       alert("Error deleting product: " + error.message);
+      return;
+    }
+    fetchProducts();
+  };
+
+  const handleToggleStock = async (prod, stockType) => {
+    let updatePayload = {};
+    if (stockType === 'overall') {
+      const nextVal = !(prod.is_out_of_stock || prod.in_stock === false);
+      updatePayload = { is_out_of_stock: nextVal, in_stock: !nextVal };
+    } else if (stockType === '3ml') {
+      const nextVal = !(prod.is_out_of_stock_3ml || prod.in_stock_3ml === false);
+      updatePayload = { is_out_of_stock_3ml: nextVal, in_stock_3ml: !nextVal };
+    } else if (stockType === '6ml') {
+      const nextVal = !(prod.is_out_of_stock_6ml || prod.in_stock_6ml === false);
+      updatePayload = { is_out_of_stock_6ml: nextVal, in_stock_6ml: !nextVal };
+    }
+
+    const { error } = await supabase
+      .from('products')
+      .update(updatePayload)
+      .eq('id', prod.id);
+
+    if (error) {
+      alert("Error updating stock status: " + error.message);
       return;
     }
     fetchProducts();
@@ -2325,6 +2365,49 @@ export default function App() {
                       )}
                     </div>
 
+                    <div className="border-t border-stone-100 pt-4 space-y-3">
+                      <span className="text-[10px] font-bold text-stone-700 uppercase tracking-wider block">
+                        Stock Availability Controls
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-stone-50 border border-stone-200 rounded">
+                        <label className="flex items-center gap-2 text-xs font-medium text-stone-800 cursor-pointer bg-white p-2.5 rounded border border-stone-200 hover:border-red-400">
+                          <input
+                            type="checkbox"
+                            checked={newProduct.isOutOfStock}
+                            onChange={(e) => setNewProduct({ ...newProduct, isOutOfStock: e.target.checked })}
+                            className="accent-red-600 cursor-pointer"
+                          />
+                          <span className={newProduct.isOutOfStock ? "text-red-600 font-bold" : ""}>
+                            Entire Product Out of Stock
+                          </span>
+                        </label>
+
+                        <label className="flex items-center gap-2 text-xs font-medium text-stone-800 cursor-pointer bg-white p-2.5 rounded border border-stone-200 hover:border-orange-400">
+                          <input
+                            type="checkbox"
+                            checked={newProduct.isOutOfStock3ml}
+                            onChange={(e) => setNewProduct({ ...newProduct, isOutOfStock3ml: e.target.checked })}
+                            className="accent-orange-600 cursor-pointer"
+                          />
+                          <span className={newProduct.isOutOfStock3ml ? "text-orange-600 font-bold" : ""}>
+                            3ml Variant Out of Stock
+                          </span>
+                        </label>
+
+                        <label className="flex items-center gap-2 text-xs font-medium text-stone-800 cursor-pointer bg-white p-2.5 rounded border border-stone-200 hover:border-amber-400">
+                          <input
+                            type="checkbox"
+                            checked={newProduct.isOutOfStock6ml}
+                            onChange={(e) => setNewProduct({ ...newProduct, isOutOfStock6ml: e.target.checked })}
+                            className="accent-amber-600 cursor-pointer"
+                          />
+                          <span className={newProduct.isOutOfStock6ml ? "text-amber-600 font-bold" : ""}>
+                            6ml Variant Out of Stock
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+
                     <div className="border-t border-stone-100 pt-4 space-y-1.5">
                       <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider">Product Rich Description *</label>
                       <Editor
@@ -2348,6 +2431,7 @@ export default function App() {
                           <th className="p-4">Category</th>
                           <th className="p-4">3ml Offer / Orig</th>
                           <th className="p-4">6ml Offer / Orig</th>
+                          <th className="p-4">Stock Status</th>
                           <th className="p-4">Rating Stats</th>
                           <th className="p-4 text-center">Actions</th>
                         </tr>
@@ -2400,6 +2484,48 @@ export default function App() {
                               <span className="text-[10px] text-stone-400 line-through">Rs. {prod.price6mlorig}</span>
                             </td>
                             <td className="p-4">
+                              <div className="space-y-1 min-w-32">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleStock(prod, 'overall')}
+                                  className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider block w-full text-center transition-all cursor-pointer ${
+                                    (prod.is_out_of_stock || prod.in_stock === false)
+                                      ? "bg-red-100 text-red-700 border border-red-200 hover:bg-red-200"
+                                      : "bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200"
+                                  }`}
+                                  title="Click to toggle overall product stock"
+                                >
+                                  {(prod.is_out_of_stock || prod.in_stock === false) ? "Full OOS ✖" : "Overall In Stock ✓"}
+                                </button>
+                                <div className="flex gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleStock(prod, '3ml')}
+                                    className={`flex-1 py-0.5 px-1 rounded text-[8px] font-bold uppercase transition-all cursor-pointer ${
+                                      (prod.is_out_of_stock_3ml || prod.in_stock_3ml === false || prod.is_out_of_stock || prod.in_stock === false)
+                                        ? "bg-orange-100 text-orange-800 border border-orange-200"
+                                        : "bg-stone-100 text-stone-700 border border-stone-200 hover:bg-stone-200"
+                                    }`}
+                                    title="Click to toggle 3ml stock"
+                                  >
+                                    3ml: {(prod.is_out_of_stock_3ml || prod.in_stock_3ml === false || prod.is_out_of_stock || prod.in_stock === false) ? "OOS" : "OK"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleStock(prod, '6ml')}
+                                    className={`flex-1 py-0.5 px-1 rounded text-[8px] font-bold uppercase transition-all cursor-pointer ${
+                                      (prod.is_out_of_stock_6ml || prod.in_stock_6ml === false || prod.is_out_of_stock || prod.in_stock === false)
+                                        ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                        : "bg-stone-100 text-stone-700 border border-stone-200 hover:bg-stone-200"
+                                    }`}
+                                    title="Click to toggle 6ml stock"
+                                  >
+                                    6ml: {(prod.is_out_of_stock_6ml || prod.in_stock_6ml === false || prod.is_out_of_stock || prod.in_stock === false) ? "OOS" : "OK"}
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-4">
                               <div className="flex items-center gap-1.5 text-stone-700">
                                 <span className="font-bold">{parseFloat(prod.rating || 5.0).toFixed(1)}</span>
                                 <span className="text-stone-400">({prod.ratingcount || 0})</span>
@@ -2423,7 +2549,10 @@ export default function App() {
                                       price3mlOffer: String(prod.price3mloffer || ''),
                                       price6mlOrig: String(prod.price6mlorig || ''),
                                       price6mlOffer: String(prod.price6mloffer || ''),
-                                      description: cleanProductDescription(prod.description || '')
+                                      description: cleanProductDescription(prod.description || ''),
+                                      isOutOfStock: Boolean(prod.is_out_of_stock || prod.in_stock === false),
+                                      isOutOfStock3ml: Boolean(prod.is_out_of_stock_3ml || prod.in_stock_3ml === false),
+                                      isOutOfStock6ml: Boolean(prod.is_out_of_stock_6ml || prod.in_stock_6ml === false)
                                     });
                                     setShowProductForm(true);
                                   }}
