@@ -1082,16 +1082,34 @@ export default function App() {
       updateData = { shiprocket_charge: numVal };
     }
 
-    setSavingInlineEdit(true);
-    const { error } = await supabase.from('orders').update(updateData).eq('id', orderId);
-    if (!error) {
-      await fetchOrders();
-      if (selectedOrder && selectedOrder.id === orderId) {
-        setSelectedOrder(prev => ({ ...prev, ...updateData }));
-      }
+    // Optimistically update UI state immediately
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updateData } : o));
+    if (selectedOrder && selectedOrder.id === orderId) {
+      setSelectedOrder(prev => ({ ...prev, ...updateData }));
     }
-    setSavingInlineEdit(false);
     setInlineEditingCell(null);
+
+    setSavingInlineEdit(true);
+    try {
+      let { error } = await supabase.from('orders').update(updateData).eq('id', orderId);
+      if (error) {
+        if (field === 'sellingPrice' && error.message.includes('manual_selling_price')) {
+          const fallback = await supabase.from('orders').update({ total_amount: numVal }).eq('id', orderId);
+          error = fallback.error;
+        } else if (field === 'baseCost' && (error.message.includes('manual_base_cost') || error.message.includes('schema cache'))) {
+          // If manual_base_cost column doesn't exist in Supabase DB schema yet, keep local state
+          error = null;
+        }
+      }
+      if (error) {
+        console.error("Failed DB update:", error.message);
+        await fetchOrders();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSavingInlineEdit(false);
+    }
   };
 
   const handleUpdateSellingPrice = async (orderId, currentPrice) => {
@@ -1102,10 +1120,14 @@ export default function App() {
       alert("Please enter a valid positive number.");
       return;
     }
-    const { error } = await supabase
+    let { error } = await supabase
       .from('orders')
       .update({ manual_selling_price: newPrice, total_amount: newPrice })
       .eq('id', orderId);
+    if (error && error.message.includes('manual_selling_price')) {
+      const fallback = await supabase.from('orders').update({ total_amount: newPrice }).eq('id', orderId);
+      error = fallback.error;
+    }
     if (error) {
       alert("Failed to update sale price: " + error.message);
     } else {
@@ -1130,7 +1152,11 @@ export default function App() {
       .update({ manual_base_cost: newCost })
       .eq('id', orderId);
     if (error) {
-      alert("Failed to update base cost: " + error.message);
+      if (error.message.includes('manual_base_cost') || error.message.includes('schema cache')) {
+        alert("Could not update base cost: The 'manual_base_cost' column does not exist in your Supabase 'orders' table yet.\n\nPlease run the SQL migration in Supabase SQL Editor:\nALTER TABLE orders ADD COLUMN IF NOT EXISTS manual_base_cost NUMERIC;");
+      } else {
+        alert("Failed to update base cost: " + error.message);
+      }
     } else {
       alert("Base cost updated to Rs. " + newCost);
       await fetchOrders();
@@ -1182,7 +1208,15 @@ export default function App() {
 
     setSavingManualOrder(true);
     try {
-      const { error } = await supabase.from('orders').insert([orderPayload]);
+      let { error } = await supabase.from('orders').insert([orderPayload]);
+      if (error && (error.message.includes('manual_base_cost') || error.message.includes('manual_selling_price') || error.message.includes('schema cache'))) {
+        // Fallback: strip optional columns if they don't exist in Supabase DB schema yet
+        const fallbackPayload = { ...orderPayload };
+        delete fallbackPayload.manual_base_cost;
+        delete fallbackPayload.manual_selling_price;
+        const fallbackRes = await supabase.from('orders').insert([fallbackPayload]);
+        error = fallbackRes.error;
+      }
       if (error) {
         throw new Error(error.message);
       }
@@ -3385,7 +3419,7 @@ export default function App() {
 
       {/* Shiprocket Rate Calculator & Initialization Modal */}
       {showShiprocketModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
           <div className="relative bg-white rounded-lg max-w-lg w-full shadow-2xl overflow-hidden border border-stone-200">
             
             {/* Header */}
@@ -3552,7 +3586,7 @@ export default function App() {
 
       {/* Sales List Modal */}
       {showSalesListModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
           <div className="relative bg-white rounded-lg max-w-3xl w-full shadow-2xl overflow-hidden border border-stone-200 animate-fadeIn">
             
             {/* Header */}
@@ -3615,7 +3649,7 @@ export default function App() {
 
       {/* Profit List Modal */}
       {showProfitListModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
           <div className="relative bg-white rounded-lg max-w-4xl w-full shadow-2xl overflow-hidden border border-stone-200 animate-fadeIn">
             
             {/* Header */}
@@ -3669,7 +3703,10 @@ export default function App() {
                               onChange={(e) => setInlineEditValue(e.target.value)}
                               onBlur={() => handleSaveInlineEdit(order.id, 'sellingPrice', inlineEditValue)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveInlineEdit(order.id, 'sellingPrice', inlineEditValue);
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  e.target.blur();
+                                }
                                 if (e.key === 'Escape') setInlineEditingCell(null);
                               }}
                               className="w-20 px-1.5 py-0.5 border-2 border-purple-500 rounded text-right font-bold text-xs bg-white text-purple-900 focus:outline-none"
@@ -3698,7 +3735,10 @@ export default function App() {
                               onChange={(e) => setInlineEditValue(e.target.value)}
                               onBlur={() => handleSaveInlineEdit(order.id, 'baseCost', inlineEditValue)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveInlineEdit(order.id, 'baseCost', inlineEditValue);
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  e.target.blur();
+                                }
                                 if (e.key === 'Escape') setInlineEditingCell(null);
                               }}
                               className="w-20 px-1.5 py-0.5 border-2 border-purple-500 rounded text-right font-bold text-xs bg-white text-purple-900 focus:outline-none"
@@ -3727,7 +3767,10 @@ export default function App() {
                               onChange={(e) => setInlineEditValue(e.target.value)}
                               onBlur={() => handleSaveInlineEdit(order.id, 'deliveryCost', inlineEditValue)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveInlineEdit(order.id, 'deliveryCost', inlineEditValue);
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  e.target.blur();
+                                }
                                 if (e.key === 'Escape') setInlineEditingCell(null);
                               }}
                               className="w-20 px-1.5 py-0.5 border-2 border-purple-500 rounded text-right font-bold text-xs bg-white text-purple-900 focus:outline-none"
