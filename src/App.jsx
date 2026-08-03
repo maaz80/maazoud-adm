@@ -17,7 +17,8 @@ import {
   FiList,
   FiLock,
   FiImage,
-  FiStar
+  FiStar,
+  FiTruck
 } from 'react-icons/fi';
 import Editor from './components/Editor';
 import { supabase } from './utils/supabase';
@@ -1325,13 +1326,19 @@ export default function App() {
     let deliveryCost = 0;
 
     if (order.shiprocket_charge !== null && order.shiprocket_charge !== undefined && !isNaN(Number(order.shiprocket_charge))) {
+      const charge = parseFloat(order.shiprocket_charge);
       hasDeliveryCost = true;
-      deliveryCost = parseFloat(order.shiprocket_charge);
+      // Add Rs 5.90 messaging fee for all Shiprocket orders (where charge > 0)
+      deliveryCost = charge > 0 ? charge + 5.90 : charge;
     } else if (order.shipment_details?.assign_awb_response?.response?.data?.freight_charges) {
+      const fc = parseFloat(order.shipment_details.assign_awb_response.response.data.freight_charges);
+      const isCod = order.payment_method ? (order.payment_method.toLowerCase().includes('cod') || order.payment_method.toLowerCase().includes('cash on delivery')) : false;
+      const codFee = isCod ? 50.00 : 0;
       hasDeliveryCost = true;
-      deliveryCost = parseFloat(order.shipment_details.assign_awb_response.response.data.freight_charges);
+      deliveryCost = fc > 0 ? fc + codFee + 5.90 : fc;
     }
 
+    deliveryCost = Number(deliveryCost.toFixed(2));
     const netProfit = hasDeliveryCost ? Number((sellingPrice - (totalBaseCost + deliveryCost)).toFixed(2)) : 0;
 
     return {
@@ -1471,6 +1478,10 @@ export default function App() {
   
   const nonCancelledOrders = orders.filter(o => o.status !== 'Cancelled');
   const calculatedSalesTotal = Number(nonCancelledOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0).toFixed(2));
+  const calculatedDeliveryTotal = Number(nonCancelledOrders.reduce((sum, o) => {
+    const { deliveryCost } = calculateOrderProfit(o, products);
+    return sum + deliveryCost;
+  }, 0).toFixed(2));
   const calculatedProfitTotal = Number(nonCancelledOrders.reduce((sum, o) => {
     const { profit } = calculateOrderProfit(o, products);
     return sum + profit;
@@ -1810,6 +1821,21 @@ export default function App() {
                     <div>
                       <h3 className="text-xl font-bold text-[#8c6239]">Rs. {calculatedSalesTotal}</h3>
                       <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Sales List &rarr;</p>
+                    </div>
+                  </div>
+
+                  <div 
+                    onClick={() => setShowProfitListModal(true)}
+                    className="bg-white border border-stone-200 p-5 rounded-md shadow-sm space-y-3 cursor-pointer hover:border-purple-500 transition-all hover:bg-stone-50/80"
+                    title="Click to view delivery cost breakdown"
+                  >
+                    <div className="flex justify-between items-start">
+                      <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total Shipment Cost</span>
+                      <FiTruck className="text-purple-600" size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-purple-600">Rs. {calculatedDeliveryTotal}</h3>
+                      <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Delivery List &rarr;</p>
                     </div>
                   </div>
 
@@ -3942,8 +3968,12 @@ export default function App() {
             </div>
 
             {/* Footer */}
-            <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-between items-center">
-              <span className="text-xs font-bold text-green-700">Total Net Profit: Rs. {calculatedProfitTotal}</span>
+            <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-between items-center flex-wrap gap-4">
+              <div className="flex items-center gap-6">
+                <span className="text-xs font-bold text-[#8c6239]">Total Sales: Rs. {calculatedSalesTotal}</span>
+                <span className="text-xs font-bold text-purple-700">Total Delivery Cost: Rs. {calculatedDeliveryTotal}</span>
+                <span className="text-xs font-bold text-green-700">Total Net Profit: Rs. {calculatedProfitTotal}</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowProfitListModal(false)}
