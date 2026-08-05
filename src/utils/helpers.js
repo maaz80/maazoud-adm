@@ -1,5 +1,6 @@
 export const ADMIN_EMAIL = 'maazforlap@gmail.com';
 export const COMBO_PRODUCT_MARKER = '<!-- product-type:combo -->';
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '' : 'https://maazoud.vercel.app');
 
 export const getWhatsAppLink = (order) => {
   if (!order) return "#";

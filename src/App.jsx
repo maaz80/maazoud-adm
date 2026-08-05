@@ -4,6 +4,8 @@ import autoTable from 'jspdf-autotable';
 import { supabase } from './utils/supabase';
 import {
   ADMIN_EMAIL,
+  COMBO_PRODUCT_MARKER,
+  API_BASE,
   isComboProduct,
   cleanProductDescription,
   extractComboItems,
@@ -298,7 +300,7 @@ export default function App() {
       const token = session?.access_token;
       const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-      const res = await fetch('/api/financial-summary', { headers });
+      const res = await fetch(`${API_BASE}/api/financial-summary`, { headers });
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
@@ -685,7 +687,7 @@ export default function App() {
     setSelectedCourier(null);
 
     try {
-      const res = await fetch('/api/shiprocket/courier-rates', {
+      const res = await fetch(`${API_BASE}/api/shiprocket/courier-rates`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -719,7 +721,7 @@ export default function App() {
     setInitializingShipment(true);
 
     try {
-      const res = await fetch('/api/shiprocket/create-order', {
+      const res = await fetch(`${API_BASE}/api/shiprocket/create-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -772,7 +774,7 @@ export default function App() {
         return;
       }
 
-      const res = await fetch('/api/shiprocket/generate-label', {
+      const res = await fetch(`${API_BASE}/api/shiprocket/generate-label`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shipment_id: shipmentId, awb_code: awb })
@@ -805,7 +807,7 @@ export default function App() {
         return;
       }
 
-      const res = await fetch('/api/shiprocket/generate-manifest', {
+      const res = await fetch(`${API_BASE}/api/shiprocket/generate-manifest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shipment_id: shipmentId })
@@ -831,7 +833,7 @@ export default function App() {
     setSyncingShipment(true);
 
     try {
-      const res = await fetch('/api/shiprocket/sync-order', {
+      const res = await fetch(`${API_BASE}/api/shiprocket/sync-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order_id: order.id })
