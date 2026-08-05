@@ -293,7 +293,103 @@ export default function App() {
     }
   };
 
-  const fetchFinancialSummary = async () => {
+  const calculateLocalFinancialSummary = (allOrders = orders) => {
+    const nonCancelled = (allOrders || []).filter(o => o.status !== 'Cancelled');
+
+    const offlineOrders = nonCancelled.filter(o => {
+      const pm = (o.payment_method || '').toLowerCase();
+      return pm.includes('offline') || pm.includes('cash (offline)') || (o.id || '').startsWith('ORD-OFFLINE');
+    });
+    const offlineSum = offlineOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+    const codDelivered = nonCancelled.filter(o => {
+      const pm = (o.payment_method || '').toLowerCase();
+      return (pm.includes('cod') || pm.includes('cash on delivery')) && o.status === 'Delivered';
+    });
+    const codDeliveredSum = codDelivered.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+    const codShipped = nonCancelled.filter(o => {
+      const pm = (o.payment_method || '').toLowerCase();
+      return (pm.includes('cod') || pm.includes('cash on delivery')) && o.status === 'Shipped';
+    });
+    const codShippedSum = codShipped.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+    const codProcessing = nonCancelled.filter(o => {
+      const pm = (o.payment_method || '').toLowerCase();
+      return (pm.includes('cod') || pm.includes('cash on delivery')) && (o.status === 'Processing' || o.status === 'Placed');
+    });
+    const codProcessingSum = codProcessing.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+    const prepaidOrders = nonCancelled.filter(o => {
+      const pm = (o.payment_method || '').toLowerCase();
+      return pm.includes('razorpay') || pm.includes('payment id') || pm.includes('prepaid');
+    });
+    const prepaidTotal = prepaidOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+    const prepaidDelivered = prepaidOrders.filter(o => o.status === 'Delivered');
+    const prepaidDeliveredSum = prepaidDelivered.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+    const prepaidShipped = prepaidOrders.filter(o => o.status === 'Shipped');
+    const prepaidShippedSum = prepaidShipped.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+    const prepaidProcessing = prepaidOrders.filter(o => o.status !== 'Delivered' && o.status !== 'Shipped');
+    const prepaidProcessingSum = prepaidProcessing.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+    const fullCodFuture = codDeliveredSum + codShippedSum + codProcessingSum;
+
+    return {
+      shiprocket: {
+        connected: false,
+        wallet_balance: 0,
+        upcoming_remittance_total: Number(codDeliveredSum.toFixed(2)),
+        remittances_schedule: [],
+        error: null
+      },
+      razorpay: {
+        connected: false,
+        total_captured: Number(prepaidTotal.toFixed(2)),
+        total_settled: Number(prepaidTotal.toFixed(2)),
+        unsettled_balance: 0,
+        settlements_schedule: [],
+        error: null
+      },
+      local_metrics: {
+        offline_sales_total: Number(offlineSum.toFixed(2)),
+        offline_orders_count: offlineOrders.length,
+        cod_delivered_total: Number(codDeliveredSum.toFixed(2)),
+        cod_delivered_count: codDelivered.length,
+        cod_shipped_total: Number(codShippedSum.toFixed(2)),
+        cod_shipped_count: codShipped.length,
+        cod_processing_total: Number(codProcessingSum.toFixed(2)),
+        cod_processing_count: codProcessing.length,
+        cod_pipeline_total: Number(fullCodFuture.toFixed(2)),
+        cod_future_total: Number(fullCodFuture.toFixed(2)),
+        prepaid_delivered_total: Number(prepaidDeliveredSum.toFixed(2)),
+        prepaid_delivered_count: prepaidDelivered.length,
+        prepaid_shipped_total: Number(prepaidShippedSum.toFixed(2)),
+        prepaid_shipped_count: prepaidShipped.length,
+        prepaid_processing_total: Number(prepaidProcessingSum.toFixed(2)),
+        prepaid_processing_count: prepaidProcessing.length,
+        prepaid_pipeline_total: Number(prepaidTotal.toFixed(2)),
+        cod_delivered_unremitted_estimate: Number(codDeliveredSum.toFixed(2)),
+        prepaid_razorpay_total: Number(prepaidTotal.toFixed(2))
+      },
+      combined_summary: {
+        offline_self_handover_total: Number(offlineSum.toFixed(2)),
+        cod_delivered_pending: Number(codDeliveredSum.toFixed(2)),
+        cod_shipped_in_transit: Number(codShippedSum.toFixed(2)),
+        cod_processing_total: Number(codProcessingSum.toFixed(2)),
+        cod_pipeline_total: Number(fullCodFuture.toFixed(2)),
+        prepaid_unsettled_balance: 0,
+        prepaid_shipped_in_transit: Number(prepaidShippedSum.toFixed(2)),
+        prepaid_pipeline_total: Number(prepaidTotal.toFixed(2)),
+        total_pending_bank_payout: Number(codDeliveredSum.toFixed(2)),
+        total_already_received_in_bank: Number(prepaidTotal.toFixed(2))
+      }
+    };
+  };
+
+  const fetchFinancialSummary = async (currentOrders = orders) => {
     setLoadingFinancials(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -307,9 +403,11 @@ export default function App() {
         setFinancialSummary(data);
       } else {
         console.warn("Financial summary API route returned status:", res.status);
+        setFinancialSummary(calculateLocalFinancialSummary(currentOrders));
       }
     } catch (err) {
       console.error("Error fetching financial summary:", err);
+      setFinancialSummary(calculateLocalFinancialSummary(currentOrders));
     } finally {
       setLoadingFinancials(false);
     }
@@ -327,7 +425,12 @@ export default function App() {
 
   const fetchOrders = async () => {
     const { data } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-    if (data) setOrders(data);
+    if (data) {
+      setOrders(data);
+      if (!financialSummary) {
+        setFinancialSummary(calculateLocalFinancialSummary(data));
+      }
+    }
   };
 
   const fetchBanners = async () => {
@@ -686,12 +789,30 @@ export default function App() {
     setCourierRates([]);
     setSelectedCourier(null);
 
+    const targetOrder = orders.find(o => o.id === shiprocketOrderId);
+    if (!targetOrder || !targetOrder.pincode) {
+      setRateError("Target order not found or missing delivery pincode.");
+      setFetchingRates(false);
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_BASE}/api/shiprocket/courier-rates`, {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      const isCod = targetOrder.payment_method ? (targetOrder.payment_method.toLowerCase().includes('cod') || targetOrder.payment_method.toLowerCase().includes('cash on delivery')) : false;
+
+      const res = await fetch(`${API_BASE}/api/shipping-rates`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
-          order_id: shiprocketOrderId,
+          action: 'get_rates',
+          delivery_pincode: targetOrder.pincode,
+          is_cod: isCod,
           weight: shiprocketWeight,
           length: shiprocketLength,
           width: shiprocketWidth,
@@ -702,9 +823,10 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to fetch courier rates from Shiprocket.');
 
-      if (data.available_courier_companies && data.available_courier_companies.length > 0) {
-        setCourierRates(data.available_courier_companies);
-        setSelectedCourier(data.available_courier_companies[0]); // Select cheapest by default
+      const couriers = data.couriers || data.available_courier_companies || [];
+      if (couriers.length > 0) {
+        setCourierRates(couriers);
+        setSelectedCourier(couriers[0]); // Select cheapest by default
       } else {
         setRateError('No couriers available for this delivery pincode.');
       }
@@ -721,14 +843,21 @@ export default function App() {
     setInitializingShipment(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/shiprocket/create-order`, {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      const res = await fetch(`${API_BASE}/api/shipping-rates`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
+          action: 'create_shipment',
           order_id: shiprocketOrderId,
           courier_id: selectedCourier.courier_company_id,
-          courier_name: selectedCourier.courier_name,
-          freight_charge: selectedCourier.rate,
+          courier_rate: selectedCourier.rate,
           pickup_date: shiprocketPickupDate,
           weight: shiprocketWeight,
           length: shiprocketLength,
@@ -740,7 +869,7 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to initialize Shiprocket shipment.');
 
-      alert(`Shipment Initialized Successfully!\nAWB: ${data.awb_code}\nCourier: ${data.courier_name}\nCharge: Rs. ${data.freight_charge}`);
+      alert(`Shipment Initialized Successfully!\nAWB: ${data.shiprocket_awb}\nCourier: ${data.courier_name}\nCharge: Rs. ${data.rate || selectedCourier.rate}`);
       setShowShiprocketModal(false);
       await fetchOrders();
 
@@ -748,9 +877,9 @@ export default function App() {
         setSelectedOrder({
           ...selectedOrder,
           status: 'Shipped',
-          shiprocket_awb: data.awb_code,
+          shiprocket_awb: data.shiprocket_awb,
           shiprocket_courier_name: data.courier_name,
-          shiprocket_charge: data.freight_charge,
+          shiprocket_charge: data.rate || selectedCourier.rate,
           shiprocket_status: 'AWB Assigned'
         });
       }
@@ -774,10 +903,17 @@ export default function App() {
         return;
       }
 
-      const res = await fetch(`${API_BASE}/api/shiprocket/generate-label`, {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      const res = await fetch(`${API_BASE}/api/shipping-rates`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shipment_id: shipmentId, awb_code: awb })
+        headers,
+        body: JSON.stringify({ action: 'generate_label', shipment_id: shipmentId, awb_code: awb })
       });
 
       const data = await res.json();
@@ -807,10 +943,17 @@ export default function App() {
         return;
       }
 
-      const res = await fetch(`${API_BASE}/api/shiprocket/generate-manifest`, {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      const res = await fetch(`${API_BASE}/api/shipping-rates`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shipment_id: shipmentId })
+        headers,
+        body: JSON.stringify({ action: 'generate_manifest', shipment_id: shipmentId })
       });
 
       const data = await res.json();
@@ -833,26 +976,30 @@ export default function App() {
     setSyncingShipment(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/shiprocket/sync-order`, {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      const res = await fetch(`${API_BASE}/api/shipping-rates`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_id: order.id })
+        headers,
+        body: JSON.stringify({ action: 'sync_shipment', order_id: order.id })
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to sync with Shiprocket.');
 
-      alert(`Shiprocket Sync Complete!\nStatus: ${data.shiprocket_status}\nAWB: ${data.awb_code || 'Pending'}\nCourier: ${data.courier_name || 'N/A'}`);
+      const updatedOrder = data.order || {};
+      alert(`Shiprocket Sync Complete!\nStatus: ${updatedOrder.shiprocket_status || 'Synced'}\nAWB: ${updatedOrder.shiprocket_awb || 'Pending'}\nCourier: ${updatedOrder.shiprocket_courier_name || 'N/A'}`);
       await fetchOrders();
 
       if (selectedOrder && selectedOrder.id === order.id) {
         setSelectedOrder(prev => ({
           ...prev,
-          status: data.order_status || prev.status,
-          shiprocket_awb: data.awb_code || prev.shiprocket_awb,
-          shiprocket_courier_name: data.courier_name || prev.shiprocket_courier_name,
-          shiprocket_charge: data.freight_charge || prev.shiprocket_charge,
-          shiprocket_status: data.shiprocket_status || prev.shiprocket_status
+          ...updatedOrder
         }));
       }
     } catch (err) {
@@ -1386,6 +1533,8 @@ export default function App() {
               loadingFinancials={loadingFinancials}
               fetchFinancialSummary={fetchFinancialSummary}
               setShowFinancialModal={setShowFinancialModal}
+              setShowManualOrderModal={setShowManualOrderModal}
+              products={products}
               orders={orders}
               setSelectedOrder={setSelectedOrder}
               dashboardDeliveredFilter={dashboardDeliveredFilter}

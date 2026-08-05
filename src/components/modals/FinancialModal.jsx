@@ -191,13 +191,50 @@ export default function FinancialModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="bg-white p-4 rounded border border-blue-200/80 shadow-2xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500 block">Total Online Prepaid Collected</span>
-                <h3 className="text-xl font-bold text-blue-700 mt-1">₹ {financialSummary?.local_metrics?.prepaid_razorpay_total || 0}</h3>
+                <h3 className="text-xl font-bold text-blue-700 mt-1">
+                  ₹ {financialSummary?.razorpay?.connected ? (financialSummary?.razorpay?.total_captured || 0) : (financialSummary?.local_metrics?.prepaid_razorpay_total || 0)}
+                </h3>
                 <p className="text-[10px] text-stone-400 mt-0.5">Gross prepaid revenue captured via Razorpay</p>
               </div>
               <div className="bg-white p-4 rounded border border-blue-200/80 shadow-2xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500 block">Pending Bank Payout</span>
                 <h3 className="text-xl font-bold text-purple-700 mt-1">₹ {financialSummary?.razorpay?.unsettled_balance || 0}</h3>
                 <p className="text-[10px] text-stone-400 mt-0.5">Unsettled online payments pending bank transfer</p>
+              </div>
+            </div>
+
+            {/* Prepaid Order Status Breakdown */}
+            <div className="bg-white p-3.5 rounded border border-blue-200/80 space-y-2">
+              <div className="flex justify-between items-center border-b border-blue-100 pb-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-900 block">
+                  Prepaid Order Revenue Breakdown
+                </span>
+                <span className="text-[10px] font-bold text-blue-700">
+                  Total: ₹ {financialSummary?.local_metrics?.prepaid_razorpay_total || 0}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                <div className="bg-emerald-50/70 p-2.5 rounded border border-emerald-200/60 flex justify-between items-center">
+                  <div>
+                    <span className="text-[10px] font-bold text-emerald-800 uppercase block">Delivered Orders</span>
+                    <span className="text-[10px] text-emerald-600 font-medium">{financialSummary?.local_metrics?.prepaid_delivered_count || 0} Orders</span>
+                  </div>
+                  <span className="font-bold text-emerald-700">₹ {financialSummary?.local_metrics?.prepaid_delivered_total || 0}</span>
+                </div>
+                <div className="bg-purple-50/70 p-2.5 rounded border border-purple-200/60 flex justify-between items-center">
+                  <div>
+                    <span className="text-[10px] font-bold text-purple-800 uppercase block">Shipped (In-Transit)</span>
+                    <span className="text-[10px] text-purple-600 font-medium">{financialSummary?.local_metrics?.prepaid_shipped_count || 0} Orders</span>
+                  </div>
+                  <span className="font-bold text-purple-700">₹ {financialSummary?.local_metrics?.prepaid_shipped_total || 0}</span>
+                </div>
+                <div className="bg-amber-50/70 p-2.5 rounded border border-amber-200/60 flex justify-between items-center">
+                  <div>
+                    <span className="text-[10px] font-bold text-amber-800 uppercase block">Processing / Packing</span>
+                    <span className="text-[10px] text-amber-600 font-medium">{financialSummary?.local_metrics?.prepaid_processing_count || 0} Orders</span>
+                  </div>
+                  <span className="font-bold text-amber-700">₹ {financialSummary?.local_metrics?.prepaid_processing_total || 0}</span>
+                </div>
               </div>
             </div>
 
