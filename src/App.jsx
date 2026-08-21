@@ -297,31 +297,31 @@ export default function App() {
     const nonCancelled = (allOrders || []).filter(o => o.status !== 'Cancelled');
 
     const offlineOrders = nonCancelled.filter(o => {
-      const pm = (o.payment_method || '').toLowerCase();
-      return pm.includes('offline') || pm.includes('cash (offline)') || (o.id || '').startsWith('ORD-OFFLINE');
+      const pm = String(o.payment_method || '').toLowerCase();
+      return pm.includes('offline') || pm.includes('cash (offline)') || String(o.id || '').startsWith('ORD-OFFLINE');
     });
     const offlineSum = offlineOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
 
     const codDelivered = nonCancelled.filter(o => {
-      const pm = (o.payment_method || '').toLowerCase();
+      const pm = String(o.payment_method || '').toLowerCase();
       return (pm.includes('cod') || pm.includes('cash on delivery')) && o.status === 'Delivered';
     });
     const codDeliveredSum = codDelivered.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
 
     const codShipped = nonCancelled.filter(o => {
-      const pm = (o.payment_method || '').toLowerCase();
+      const pm = String(o.payment_method || '').toLowerCase();
       return (pm.includes('cod') || pm.includes('cash on delivery')) && o.status === 'Shipped';
     });
     const codShippedSum = codShipped.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
 
     const codProcessing = nonCancelled.filter(o => {
-      const pm = (o.payment_method || '').toLowerCase();
+      const pm = String(o.payment_method || '').toLowerCase();
       return (pm.includes('cod') || pm.includes('cash on delivery')) && (o.status === 'Processing' || o.status === 'Placed');
     });
     const codProcessingSum = codProcessing.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
 
     const prepaidOrders = nonCancelled.filter(o => {
-      const pm = (o.payment_method || '').toLowerCase();
+      const pm = String(o.payment_method || '').toLowerCase();
       return pm.includes('razorpay') || pm.includes('payment id') || pm.includes('prepaid');
     });
     const prepaidTotal = prepaidOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
@@ -804,19 +804,21 @@ export default function App() {
         ...(token ? { 'Authorization': `Bearer ${token}` } : {})
       };
 
-      const isCod = targetOrder.payment_method ? (targetOrder.payment_method.toLowerCase().includes('cod') || targetOrder.payment_method.toLowerCase().includes('cash on delivery')) : false;
+      const isCod = String(targetOrder?.payment_method || '').toLowerCase().includes('cod') || String(targetOrder?.payment_method || '').toLowerCase().includes('cash on delivery');
 
       const res = await fetch(`${API_BASE}/api/shipping-rates`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
           action: 'get_rates',
+          order_id: targetOrder.id,
           delivery_pincode: targetOrder.pincode,
           is_cod: isCod,
           weight: shiprocketWeight,
           length: shiprocketLength,
           width: shiprocketWidth,
-          height: shiprocketHeight
+          height: shiprocketHeight,
+          pickup_date: shiprocketPickupDate
         })
       });
 
@@ -1130,7 +1132,7 @@ export default function App() {
           order.id,
           new Date(order.created_at).toLocaleDateString(),
           order.customer_name || 'N/A',
-          order.payment_method?.includes('Payment ID') ? 'Razorpay' : order.payment_method || 'COD',
+          String(order.payment_method || '').includes('Payment ID') ? 'Razorpay' : order.payment_method || 'COD',
           `Rs. ${sellingPrice}`,
           `Rs. ${baseCost}`,
           hasDeliveryCost ? `Rs. ${deliveryCost}` : 'Pending',
@@ -1193,7 +1195,7 @@ export default function App() {
           order.customer_name || 'N/A',
           order.phone || '',
           itemsText,
-          order.payment_method?.includes('Payment ID') ? 'Razorpay' : order.payment_method || 'COD',
+          String(order.payment_method || '').includes('Payment ID') ? 'Razorpay' : order.payment_method || 'COD',
           `Rs. ${order.total_amount}`
         ];
       });
@@ -1439,10 +1441,10 @@ export default function App() {
   }, 0).toFixed(2));
 
   const filteredOrders = orders.filter(order => {
-    const query = orderSearchQuery.toLowerCase().trim();
-    const matchesSearch = order.id.toLowerCase().includes(query) ||
-      (order.customer_name && order.customer_name.toLowerCase().includes(query)) ||
-      (order.phone && order.phone.includes(query));
+    const query = String(orderSearchQuery || '').toLowerCase().trim();
+    const matchesSearch = String(order.id || '').toLowerCase().includes(query) ||
+      String(order.customer_name || '').toLowerCase().includes(query) ||
+      String(order.phone || '').includes(query);
     const matchesStatus = orderStatusFilter === 'All' || getOrderStatus(order) === orderStatusFilter;
 
     if (!matchesSearch || !matchesStatus) return false;

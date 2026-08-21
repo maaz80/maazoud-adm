@@ -109,12 +109,12 @@ export default function DeliveredListModal({
           {/* Quick Summary Cards for Selected Filter */}
           {(() => {
             const targetOrders = filterDeliveredOrdersByDate(allDeliveredOrders, deliveredDateFilter).filter(o => {
-              const q = deliveredSearchQuery.toLowerCase().trim();
+              const q = String(deliveredSearchQuery || '').toLowerCase().trim();
               if (!q) return true;
-              return o.id.toLowerCase().includes(q) ||
-                (o.customer_name && o.customer_name.toLowerCase().includes(q)) ||
-                (o.phone && o.phone.includes(q)) ||
-                (o.address && o.address.toLowerCase().includes(q));
+              return String(o.id || '').toLowerCase().includes(q) ||
+                String(o.customer_name || '').toLowerCase().includes(q) ||
+                String(o.phone || '').includes(q) ||
+                String(o.address || '').toLowerCase().includes(q);
             });
             const totalAmt = targetOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
             const avgAmt = targetOrders.length ? Math.round(totalAmt / targetOrders.length) : 0;
@@ -151,12 +151,12 @@ export default function DeliveredListModal({
         <div className="p-6 overflow-y-auto max-h-[50vh] space-y-4">
           {(() => {
             const targetOrders = filterDeliveredOrdersByDate(allDeliveredOrders, deliveredDateFilter).filter(o => {
-              const q = deliveredSearchQuery.toLowerCase().trim();
+              const q = String(deliveredSearchQuery || '').toLowerCase().trim();
               if (!q) return true;
-              return o.id.toLowerCase().includes(q) ||
-                (o.customer_name && o.customer_name.toLowerCase().includes(q)) ||
-                (o.phone && o.phone.includes(q)) ||
-                (o.address && o.address.toLowerCase().includes(q));
+              return String(o.id || '').toLowerCase().includes(q) ||
+                String(o.customer_name || '').toLowerCase().includes(q) ||
+                String(o.phone || '').includes(q) ||
+                String(o.address || '').toLowerCase().includes(q);
             });
 
             if (targetOrders.length === 0) {

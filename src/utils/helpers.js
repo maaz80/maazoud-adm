@@ -124,7 +124,7 @@ export const calculateOrderProfit = (order, productsList) => {
     deliveryCost = charge > 0 ? charge + 5.90 : charge;
   } else if (order.shipment_details?.assign_awb_response?.response?.data?.freight_charges) {
     const fc = parseFloat(order.shipment_details.assign_awb_response.response.data.freight_charges);
-    const isCod = order.payment_method ? (order.payment_method.toLowerCase().includes('cod') || order.payment_method.toLowerCase().includes('cash on delivery')) : false;
+    const isCod = String(order?.payment_method || '').toLowerCase().includes('cod') || String(order?.payment_method || '').toLowerCase().includes('cash on delivery');
     const codFee = isCod ? 50.00 : 0;
     hasDeliveryCost = true;
     deliveryCost = fc > 0 ? fc + codFee + 5.90 : fc;

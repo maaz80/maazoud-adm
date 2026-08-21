@@ -50,7 +50,7 @@ export default function DashboardView({
   const nonCancelledOrders = (orders || []).filter(o => o.status !== 'Cancelled');
 
   const prepaidOrders = nonCancelledOrders.filter(o => {
-    const pm = (o.payment_method || '').toLowerCase();
+    const pm = String(o.payment_method || '').toLowerCase();
     return pm.includes('razorpay') || pm.includes('payment id') || pm.includes('prepaid');
   });
 
@@ -81,8 +81,8 @@ export default function DashboardView({
 
   // --- Dynamic Offline Sales Calculations ---
   const offlineOrders = nonCancelledOrders.filter(o => {
-    const pm = (o.payment_method || '').toLowerCase();
-    return pm.includes('offline') || pm.includes('cash (offline)') || (o.id || '').startsWith('ORD-OFFLINE');
+    const pm = String(o.payment_method || '').toLowerCase();
+    return pm.includes('offline') || pm.includes('cash (offline)') || String(o.id || '').startsWith('ORD-OFFLINE');
   });
 
   const offlineSalesTotal = offlineOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
@@ -94,7 +94,7 @@ export default function DashboardView({
 
   // --- Dynamic COD & Shiprocket Remittance Calculations ---
   const codOrders = nonCancelledOrders.filter(o => {
-    const pm = (o.payment_method || '').toLowerCase();
+    const pm = String(o.payment_method || '').toLowerCase();
     return (pm.includes('cod') || pm.includes('cash on delivery')) && !pm.includes('offline');
   });
 
@@ -812,7 +812,7 @@ export default function DashboardView({
               <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                 {list.map(order => {
                   const delDate = getOrderDeliveryDate(order);
-                  const isRazorpay = (order.payment_method || '').toLowerCase().includes('razorpay') || (order.payment_method || '').toLowerCase().includes('payment id');
+                  const isRazorpay = String(order.payment_method || '').toLowerCase().includes('razorpay') || String(order.payment_method || '').toLowerCase().includes('payment id');
                   return (
                     <div
                       key={order.id}

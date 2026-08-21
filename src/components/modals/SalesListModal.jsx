@@ -46,7 +46,7 @@ export default function SalesListModal({
                   <td className="p-3 text-stone-500">{new Date(order.created_at).toLocaleDateString()}</td>
                   <td className="p-3 text-stone-800">{order.customer_name}</td>
                   <td className="p-3 text-stone-500 truncate max-w-40" title={order.payment_method}>
-                    {order.payment_method.includes('Payment ID') ? 'Razorpay' : 'COD'}
+                    {String(order.payment_method || '').includes('Payment ID') ? 'Razorpay' : order.payment_method || 'COD'}
                   </td>
                   <td className="p-3 text-right font-bold text-stone-900">Rs. {order.total_amount}</td>
                 </tr>
