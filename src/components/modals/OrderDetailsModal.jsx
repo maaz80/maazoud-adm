@@ -200,11 +200,77 @@ export default function OrderDetailsModal({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
               <div className="space-y-2 text-xs">
                 <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Payment Information</span>
-                <div className="bg-stone-50 p-3 rounded border border-stone-200 font-light space-y-1.5 text-stone-750">
-                  <div className="flex justify-between">
+                <div className="bg-stone-50 p-3 rounded border border-stone-200 font-light space-y-2 text-stone-750">
+                  <div className="flex justify-between items-center">
                     <span>Method:</span>
                     <span className="font-bold text-stone-900">{selectedOrder.payment_method}</span>
                   </div>
+                  {String(selectedOrder.payment_method || '').toLowerCase().includes('cod') && selectedOrder.status === 'Delivered' && (
+                    <div className="pt-2 border-t border-stone-200 flex flex-col gap-1.5">
+                      {Boolean(selectedOrder.is_paid) || Boolean(selectedOrder.shipment_details?.cod_remitted) ? (
+                        <div className="flex items-center justify-between bg-green-50 border border-green-200 p-2 rounded">
+                          <div>
+                            <span className="text-[10px] font-bold uppercase text-green-800 block">✓ Bank Payout Received</span>
+                            {selectedOrder.shipment_details?.remittance_utr && (
+                              <span className="text-[9px] font-mono text-green-700 block">UTR: {selectedOrder.shipment_details.remittance_utr}</span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!confirm("Mark COD payout back as Pending Payout?")) return;
+                              const updatedDetails = {
+                                ...(selectedOrder.shipment_details || {}),
+                                cod_remitted: false
+                              };
+                              const { error } = await supabase
+                                .from('orders')
+                                .update({ shipment_details: updatedDetails })
+                                .eq('id', selectedOrder.id);
+                              if (error) {
+                                alert("Failed: " + error.message);
+                              } else {
+                                alert("Updated to Pending Payout.");
+                                await fetchOrders();
+                                setSelectedOrder(prev => ({ ...prev, shipment_details: updatedDetails }));
+                              }
+                            }}
+                            className="text-[9px] font-bold text-stone-500 hover:text-stone-800 underline cursor-pointer"
+                          >
+                            Undo
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const utr = prompt("Enter Bank UTR / Reference No. (Optional):", "Bank Remitted");
+                            if (utr === null) return;
+                            const updatedDetails = {
+                              ...(selectedOrder.shipment_details || {}),
+                              cod_remitted: true,
+                              cod_remitted_at: new Date().toISOString(),
+                              remittance_utr: utr || 'Bank Remitted'
+                            };
+                            const { error } = await supabase
+                              .from('orders')
+                              .update({ shipment_details: updatedDetails })
+                              .eq('id', selectedOrder.id);
+                            if (error) {
+                              alert("Failed to update status: " + error.message);
+                            } else {
+                              alert("COD payout marked as Received in Bank!");
+                              await fetchOrders();
+                              setSelectedOrder(prev => ({ ...prev, shipment_details: updatedDetails }));
+                            }
+                          }}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-wider py-1.5 px-3 rounded transition-colors cursor-pointer text-center"
+                        >
+                          🏦 Mark COD Amount Received in Bank
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

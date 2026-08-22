@@ -160,8 +160,21 @@ export default function FinancialModal({
                   {financialSummary.shiprocket.remittances_schedule.map((r, i) => (
                     <tr key={i} className="border-b border-purple-100 last:border-b-0 hover:bg-purple-50/50">
                       <td className="p-3 font-mono font-bold text-stone-900">{r.id}</td>
-                      <td className="p-3 text-stone-600">{new Date(r.date).toLocaleDateString()}</td>
-                      <td className="p-3 font-bold uppercase text-[10px] text-green-700">{r.status}</td>
+                      <td className="p-3 text-stone-600">
+                        {(() => {
+                          if (!r.date) return 'N/A';
+                          try {
+                            const clean = String(r.date).replace(/(\d+)(st|nd|rd|th)/gi, '$1');
+                            const d = new Date(clean);
+                            return isNaN(d.getTime()) ? String(r.date) : d.toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' });
+                          } catch (_) {
+                            return String(r.date);
+                          }
+                        })()}
+                      </td>
+                      <td className={`p-3 font-bold uppercase text-[10px] ${r.status === 'Received in Bank' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        {r.status}
+                      </td>
                       <td className="p-3 font-mono text-stone-500">{r.utr}</td>
                       <td className="p-3 text-right font-bold text-purple-900">₹ {r.amount}</td>
                     </tr>
