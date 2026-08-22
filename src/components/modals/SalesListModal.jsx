@@ -29,30 +29,32 @@ export default function SalesListModal({
 
         {/* Body */}
         <div className="p-6 overflow-y-auto max-h-[60vh] space-y-4">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-stone-100 border-b border-stone-200 text-stone-500 uppercase tracking-wider font-bold">
-                <th className="p-3">Order ID</th>
-                <th className="p-3">Date</th>
-                <th className="p-3">Customer</th>
-                <th className="p-3">Payment</th>
-                <th className="p-3 text-right">Sale Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {nonCancelledOrders.map(order => (
-                <tr key={order.id} className="border-b border-stone-150 hover:bg-stone-50/50 transition-colors">
-                  <td className="p-3 font-mono font-bold text-stone-900">{order.id}</td>
-                  <td className="p-3 text-stone-500">{new Date(order.created_at).toLocaleDateString()}</td>
-                  <td className="p-3 text-stone-800">{order.customer_name}</td>
-                  <td className="p-3 text-stone-500 truncate max-w-40" title={order.payment_method}>
-                    {String(order.payment_method || '').includes('Payment ID') ? 'Razorpay' : order.payment_method || 'COD'}
-                  </td>
-                  <td className="p-3 text-right font-bold text-stone-900">Rs. {order.total_amount}</td>
+          <div className="overflow-x-auto border border-stone-200 rounded">
+            <table className="w-full text-left text-xs border-collapse min-w-[500px]">
+              <thead>
+                <tr className="bg-stone-100 border-b border-stone-200 text-stone-500 uppercase tracking-wider font-bold">
+                  <th className="p-3">Order ID</th>
+                  <th className="p-3">Date</th>
+                  <th className="p-3">Customer</th>
+                  <th className="p-3">Payment</th>
+                  <th className="p-3 text-right">Sale Amount</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {nonCancelledOrders.map(order => (
+                  <tr key={order.id} className="border-b border-stone-150 hover:bg-stone-50/50 transition-colors">
+                    <td className="p-3 font-mono font-bold text-stone-900">{order.id}</td>
+                    <td className="p-3 text-stone-500">{new Date(order.created_at).toLocaleDateString()}</td>
+                    <td className="p-3 text-stone-800">{order.customer_name}</td>
+                    <td className="p-3 text-stone-500 truncate max-w-40" title={order.payment_method}>
+                      {String(order.payment_method || '').includes('Payment ID') ? 'Razorpay' : order.payment_method || 'COD'}
+                    </td>
+                    <td className="p-3 text-right font-bold text-stone-900">Rs. {order.total_amount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Footer */}

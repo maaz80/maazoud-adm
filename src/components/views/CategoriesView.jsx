@@ -107,9 +107,9 @@ export default function CategoriesView({
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-        <div className="xl:col-span-2 bg-white border border-stone-200 rounded-md shadow-sm overflow-hidden h-fit">
+        <div className="xl:col-span-2 bg-white border border-stone-200 rounded-md shadow-sm overflow-x-auto h-fit">
           {categories.length > 0 ? (
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full text-left text-xs border-collapse min-w-[500px]">
               <thead>
                 <tr className="bg-stone-100 border-b border-stone-200 text-stone-500 uppercase tracking-wider font-bold">
                   <th className="p-4">Category Name</th>

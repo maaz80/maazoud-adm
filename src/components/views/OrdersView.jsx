@@ -123,9 +123,9 @@ export default function OrdersView({
         </div>
       )}
 
-      <div className="bg-white border border-stone-200 rounded-md shadow-sm overflow-hidden">
+      <div className="bg-white border border-stone-200 rounded-md shadow-sm overflow-x-auto">
         {filteredOrders.length > 0 ? (
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full text-left text-xs border-collapse min-w-[700px]">
             <thead>
               <tr className="bg-stone-100 border-b border-stone-200 text-stone-500 uppercase tracking-wider font-bold">
                 <th className="p-4">Order ID</th>

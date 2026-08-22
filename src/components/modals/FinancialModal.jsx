@@ -146,7 +146,8 @@ export default function FinancialModal({
             </div>
 
             {financialSummary?.shiprocket?.remittances_schedule && financialSummary.shiprocket.remittances_schedule.length > 0 ? (
-              <table className="w-full text-left text-xs border-collapse bg-white rounded border border-purple-200 overflow-hidden">
+              <div className="overflow-x-auto rounded border border-purple-200">
+                <table className="w-full text-left text-xs border-collapse bg-white min-w-[500px]">
                 <thead>
                   <tr className="bg-purple-100/60 text-purple-900 font-bold uppercase text-[9px] tracking-wider">
                     <th className="p-3">Remittance ID</th>
@@ -181,6 +182,7 @@ export default function FinancialModal({
                   ))}
                 </tbody>
               </table>
+              </div>
             ) : (
               <div className="bg-white p-4 rounded border border-purple-200 text-xs text-stone-600 leading-relaxed space-y-1">
                 <p className="font-semibold text-stone-800">📌 Shiprocket Remittance Schedule Info:</p>
@@ -252,7 +254,8 @@ export default function FinancialModal({
             </div>
 
             {financialSummary?.razorpay?.settlements_schedule && financialSummary.razorpay.settlements_schedule.length > 0 ? (
-              <table className="w-full text-left text-xs border-collapse bg-white rounded border border-blue-200 overflow-hidden">
+              <div className="overflow-x-auto rounded border border-blue-200">
+                <table className="w-full text-left text-xs border-collapse bg-white min-w-[500px]">
                 <thead>
                   <tr className="bg-blue-100/60 text-blue-900 font-bold uppercase text-[9px] tracking-wider">
                     <th className="p-3">Settlement ID</th>
@@ -282,6 +285,7 @@ export default function FinancialModal({
                   ))}
                 </tbody>
               </table>
+              </div>
             ) : (
               <div className="bg-white p-4 rounded border border-blue-200 text-xs text-stone-600 leading-relaxed space-y-1">
                 <p className="font-semibold text-stone-800">📌 Razorpay Settlement Cycle Info:</p>

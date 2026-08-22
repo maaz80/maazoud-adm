@@ -38,7 +38,8 @@ export default function ProfitListModal({
 
         {/* Body */}
         <div className="p-6 overflow-y-auto max-h-[60vh] space-y-4">
-          <table className="w-full text-left text-xs border-collapse">
+          <div className="overflow-x-auto border border-stone-200 rounded">
+            <table className="w-full text-left text-xs border-collapse min-w-[650px]">
             <thead>
               <tr className="bg-stone-100 border-b border-stone-200 text-stone-500 uppercase tracking-wider font-bold">
                 <th className="p-3">Order ID</th>
@@ -179,6 +180,7 @@ export default function ProfitListModal({
               })}
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* Footer */}

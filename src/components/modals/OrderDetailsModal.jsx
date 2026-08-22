@@ -448,8 +448,8 @@ export default function OrderDetailsModal({
           </div>
 
           {/* Footer Actions */}
-          <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-between items-center gap-3">
-            <div className="flex gap-2">
+          <div className="px-4 sm:px-6 py-3 sm:py-4 border-t border-stone-200 bg-stone-50 flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2 sm:gap-3">
+            <div className="flex flex-wrap gap-2">
               {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && !selectedOrder.shiprocket_awb && (
                 <button
                   type="button"

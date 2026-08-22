@@ -38,6 +38,7 @@ import ManualOrderModal from './components/modals/ManualOrderModal';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginEmail, setLoginEmail] = useState('');
@@ -1500,13 +1501,20 @@ export default function App() {
         setActiveTab={setActiveTab}
         user={user}
         handleLogout={handleLogout}
+        mobileMenuOpen={mobileMenuOpen}
+        setMobileMenuOpen={setMobileMenuOpen}
       />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
 
         {/* Header */}
-        <Header activeTab={activeTab} user={user} />
+        <Header
+          activeTab={activeTab}
+          user={user}
+          mobileMenuOpen={mobileMenuOpen}
+          setMobileMenuOpen={setMobileMenuOpen}
+        />
 
         {/* Loading Spinner */}
         {dbLoading ? (
@@ -1517,7 +1525,7 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <main className="grow overflow-y-auto p-8">
+          <main className="grow overflow-y-auto p-3 sm:p-6 lg:p-8">
             <DashboardView
               activeTab={activeTab}
               handleDownloadSalesProfitReport={handleDownloadSalesProfitReport}
