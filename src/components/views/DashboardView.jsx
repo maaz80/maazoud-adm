@@ -120,8 +120,8 @@ export default function DashboardView({
 
   // Exact count of orders in Shiprocket upcoming remittance
   const shiprocketUpcomingCount = isSrConnected && Array.isArray(financialSummary?.shiprocket?.remittances_schedule)
-    ? financialSummary.shiprocket.remittances_schedule.length
-    : codDeliveredOrders.length;
+    ? financialSummary.shiprocket.remittances_schedule.filter(r => r.status === 'Pending Payout').length
+    : codDeliveredOrders.filter(o => !o.shipment_details?.cod_remitted).length;
 
   // 3. Total Future Expected COD Revenue (Processing + Shipped + Delivered Pending)
   const totalFutureCodExpected = localCodProcessingSum + localCodShippedSum + shiprocketUpcomingRemittance;

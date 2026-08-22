@@ -139,7 +139,7 @@ export default function FinancialModal({
               <div className="bg-white p-4 rounded border border-purple-200/80 shadow-2xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500 block">Estimated Pending COD Remittance</span>
                 <h3 className="text-xl font-bold text-amber-700 mt-1">
-                  ₹ {financialSummary?.shiprocket?.upcoming_remittance_total || financialSummary?.local_metrics?.cod_delivered_unremitted_estimate || 0}
+                  ₹ {financialSummary?.shiprocket?.upcoming_remittance_total ?? financialSummary?.local_metrics?.cod_delivered_unremitted_estimate ?? 0}
                 </h3>
                 <p className="text-[10px] text-stone-400 mt-0.5">COD cash collected by couriers pending payout</p>
               </div>
