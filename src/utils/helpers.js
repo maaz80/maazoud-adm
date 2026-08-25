@@ -39,6 +39,7 @@ export const isComboProduct = (product) => String(product?.description || '').in
 export const cleanProductDescription = (description = '') => {
   if (!description) return '';
   let str = String(description).replace(/<!-- product-type:combo -->/gi, '');
+  str = str.replace(/\[object Object\]/gi, '');
   str = str.replace(/<p[^>]*>\s*(?:<strong[^>]*>)?\s*Combo includes:[\s\S]*?<\/p>/gi, '');
   str = str.replace(/<div[^>]*>\s*(?:<strong[^>]*>)?\s*Combo includes:[\s\S]*?<\/div>/gi, '');
   str = str.replace(/(?:Combo includes:[^.<>]+(?:\.|\s*))+/gi, '');

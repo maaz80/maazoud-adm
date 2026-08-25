@@ -1,6 +1,6 @@
 import React from 'react';
 import { FiPlus, FiEdit3, FiTrash2 } from 'react-icons/fi';
-import Editor from 'react-simple-wysiwyg';
+import Editor from '../Editor';
 import { isComboProduct, extractComboItems, cleanProductDescription } from '../../utils/helpers';
 
 export default function ProductsView({
@@ -350,8 +350,11 @@ export default function ProductsView({
           <div className="border-t border-stone-100 pt-4 space-y-1.5">
             <label className="block text-[10px] font-bold text-stone-700 uppercase tracking-wider">Product Rich Description *</label>
             <Editor
-              value={newProduct.description}
-              onChange={(html) => setNewProduct({ ...newProduct, description: html })}
+              value={typeof newProduct.description === 'string' ? newProduct.description : ''}
+              onChange={(val) => {
+                const text = typeof val === 'string' ? val : (val?.target?.value || '');
+                setNewProduct({ ...newProduct, description: text });
+              }}
             />
           </div>
 

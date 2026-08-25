@@ -1,6 +1,6 @@
 import React from 'react';
 import { FiPlus, FiEdit3, FiTrash2 } from 'react-icons/fi';
-import Editor from 'react-simple-wysiwyg';
+import Editor from '../Editor';
 
 export default function BlogsView({
   activeTab,
@@ -93,8 +93,11 @@ export default function BlogsView({
           <div>
             <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider mb-1">Blog Content *</label>
             <Editor
-              value={newBlog.content}
-              onChange={(html) => setNewBlog({ ...newBlog, content: html })}
+              value={typeof newBlog.content === 'string' ? newBlog.content : ''}
+              onChange={(val) => {
+                const text = typeof val === 'string' ? val : (val?.target?.value || '');
+                setNewBlog({ ...newBlog, content: text });
+              }}
             />
           </div>
 

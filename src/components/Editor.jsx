@@ -11,6 +11,8 @@ export default function Editor({ value, onChange }) {
      const [isEditingLink, setIsEditingLink] = useState(false);
      const urlInputRef = useRef(null);
 
+     const safeValue = typeof value === 'string' ? value : (value?.target?.value || '');
+
      const editor = useEditor({
           extensions: [
                StarterKit.configure({
@@ -46,11 +48,13 @@ export default function Editor({ value, onChange }) {
                }),
           ],
 
-          content: value || "",
+          content: safeValue || "",
 
           onUpdate: ({ editor }) => {
                isInternalUpdate.current = true;
-               onChange(editor.getHTML());
+               if (typeof onChange === 'function') {
+                 onChange(editor.getHTML());
+               }
           },
 
           autofocus: false,
@@ -63,12 +67,12 @@ export default function Editor({ value, onChange }) {
                return;
           }
           const currentHTML = editor.getHTML();
-          if (value !== currentHTML) {
-               editor.commands.setContent(value || "", false, {
+          if (safeValue !== currentHTML) {
+               editor.commands.setContent(safeValue || "", false, {
                     preserveWhitespace: "full",
                });
           }
-     }, [value, editor]);
+     }, [safeValue, editor]);
 
      // Focus URL input jab modal open ho
      useEffect(() => {
