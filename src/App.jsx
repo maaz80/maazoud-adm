@@ -469,7 +469,11 @@ export default function App() {
 
       return data.publicUrl;
     } catch (err) {
-      alert("Image Upload Failed: " + err.message);
+      if (err.message && err.message.toLowerCase().includes('bucket not found')) {
+        alert("Image Upload Failed: Storage bucket 'oud_assets' does not exist in Supabase.\n\nPlease create a public bucket named 'oud_assets' in Supabase Dashboard -> Storage -> Buckets.");
+      } else {
+        alert("Image Upload Failed: " + err.message);
+      }
       return null;
     } finally {
       setUploading(false);
