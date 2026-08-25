@@ -458,19 +458,19 @@ export default function App() {
       const filePath = `${folder}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
-        .from('oud_assets')
+        .from('maazoud')
         .upload(filePath, file, { upsert: true });
 
       if (uploadError) throw uploadError;
 
       const { data } = supabase.storage
-        .from('oud_assets')
+        .from('maazoud')
         .getPublicUrl(filePath);
 
       return data.publicUrl;
     } catch (err) {
       if (err.message && err.message.toLowerCase().includes('bucket not found')) {
-        alert("Image Upload Failed: Storage bucket 'oud_assets' does not exist in Supabase.\n\nPlease create a public bucket named 'oud_assets' in Supabase Dashboard -> Storage -> Buckets.");
+        alert("Image Upload Failed: Storage bucket 'maazoud' does not exist in Supabase.\n\nPlease ensure a public bucket named 'maazoud' is created in Supabase Dashboard -> Storage -> Buckets.");
       } else {
         alert("Image Upload Failed: " + err.message);
       }
@@ -481,11 +481,13 @@ export default function App() {
   };
 
   const handleImageDelete = async (url) => {
-    if (!url || !url.includes('oud_assets')) return;
+    if (!url) return;
     try {
-      const path = url.split('/oud_assets/')[1];
+      const bucketName = url.includes('maazoud') ? 'maazoud' : (url.includes('oud_assets') ? 'oud_assets' : null);
+      if (!bucketName) return;
+      const path = url.split(`/${bucketName}/`)[1];
       if (path) {
-        await supabase.storage.from('oud_assets').remove([path]);
+        await supabase.storage.from(bucketName).remove([path]);
       }
     } catch (err) {
       console.error("Failed to remove deleted image from bucket:", err);
