@@ -1037,6 +1037,8 @@ export default function App() {
       const baseCost = parseFloat(manualBaseCost) || (manualSelectedSize === '6ml' ? 156 : 100);
       const deliveryCharge = parseFloat(manualDeliveryCharge) || 0;
 
+      const deliveryDateIso = manualStatus === 'Delivered' ? new Date().toISOString() : null;
+
       const orderPayload = {
         id: manualOrderId,
         customer_name: manualCustomerName.trim(),
@@ -1051,7 +1053,10 @@ export default function App() {
         shiprocket_charge: deliveryCharge,
         shiprocket_courier_name: 'Self Handover (Offline)',
         manual_base_cost: baseCost,
-        delivery_date: manualStatus === 'Delivered' ? new Date().toISOString() : null,
+        shipment_details: deliveryDateIso ? {
+          custom_delivery_date: deliveryDateIso,
+          delivered_date: deliveryDateIso
+        } : null,
         items: [
           {
             product_id: manualSelectedProductId,
