@@ -451,10 +451,21 @@ export default function App() {
 
   // Storage Upload Helper
   const handleImageUpload = async (file, folder = 'general') => {
+    if (!file) return null;
     setUploading(true);
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+      const originalName = file.name || "image";
+      const lastDotIndex = originalName.lastIndexOf('.');
+      const baseName = lastDotIndex !== -1 ? originalName.substring(0, lastDotIndex) : originalName;
+      const fileExt = (lastDotIndex !== -1 ? originalName.substring(lastDotIndex + 1) : 'jpg').toLowerCase();
+
+      // Sanitize filename for Google Image SEO (alphanumeric, hyphens and underscores)
+      const sanitizedBase = baseName
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/(^-|-$)+/g, '') || 'image';
+
+      const fileName = `${sanitizedBase}.${fileExt}`;
       const filePath = `${folder}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
