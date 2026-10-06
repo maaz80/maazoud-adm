@@ -12,7 +12,9 @@ import {
   withProductTypeMarker,
   buildProductDescription,
   calculateOrderProfit,
-  formatDeliveryEstimate
+  formatDeliveryEstimate,
+  isOrderInDateRange,
+  getDateRangeBounds
 } from './utils/helpers';
 
 // Components
@@ -30,6 +32,7 @@ import TestimonialsView from './components/views/TestimonialsView';
 
 import OrderDetailsModal from './components/modals/OrderDetailsModal';
 import ShiprocketModal from './components/modals/ShiprocketModal';
+import ZipyPostModal from './components/modals/ZipyPostModal';
 import SalesListModal from './components/modals/SalesListModal';
 import ProfitListModal from './components/modals/ProfitListModal';
 import DeliveredListModal from './components/modals/DeliveredListModal';
@@ -67,6 +70,9 @@ export default function App() {
   const [deliveredDateFilter, setDeliveredDateFilter] = useState('all');
   const [deliveredSearchQuery, setDeliveredSearchQuery] = useState('');
   const [dashboardDeliveredFilter, setDashboardDeliveredFilter] = useState('yesterday');
+  const [dashboardDateFilter, setDashboardDateFilter] = useState('all');
+  const [dashboardCustomStart, setDashboardCustomStart] = useState('');
+  const [dashboardCustomEnd, setDashboardCustomEnd] = useState('');
 
   // Inline editing in profit breakdown modal
   const [inlineEditingCell, setInlineEditingCell] = useState(null);
@@ -150,6 +156,22 @@ export default function App() {
   const [generatingLabel, setGeneratingLabel] = useState(false);
   const [generatingManifest, setGeneratingManifest] = useState(false);
   const [syncingShipment, setSyncingShipment] = useState(false);
+
+  // ZipyPost states
+  const [showZipyPostModal, setShowZipyPostModal] = useState(false);
+  const [zipypostOrderId, setZipypostOrderId] = useState('');
+  const [zipypostWeight, setZipypostWeight] = useState('0.5');
+  const [zipypostLength, setZipypostLength] = useState('10');
+  const [zipypostWidth, setZipypostWidth] = useState('10');
+  const [zipypostHeight, setZipypostHeight] = useState('5');
+  const [zipypostCourierRates, setZipypostCourierRates] = useState([]);
+  const [selectedZipyCourier, setSelectedZipyCourier] = useState(null);
+  const [fetchingZipyRates, setFetchingZipyRates] = useState(false);
+  const [initializingZipyShipment, setInitializingZipyShipment] = useState(false);
+  const [zipyRateError, setZipyRateError] = useState('');
+  const [zipyShipmentError, setZipyShipmentError] = useState('');
+  const [generatingZipyLabel, setGeneratingZipyLabel] = useState(false);
+  const [syncingZipyShipment, setSyncingZipyShipment] = useState(false);
 
   // Manual / Offline Order Creation states
   const [showManualOrderModal, setShowManualOrderModal] = useState(false);
@@ -1029,6 +1051,207 @@ export default function App() {
     }
   };
 
+  // ZIPYPOST API CALLS & ACTIONS
+  const handleFetchZipyCourierRates = async () => {
+    setZipyRateError('');
+    setFetchingZipyRates(true);
+    setZipypostCourierRates([]);
+    setSelectedZipyCourier(null);
+
+    const targetOrder = orders.find(o => o.id === zipypostOrderId);
+    if (!targetOrder || !targetOrder.pincode) {
+      setZipyRateError("Target order not found or missing delivery pincode.");
+      setFetchingZipyRates(false);
+      return;
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      const isCod = String(targetOrder?.payment_method || '').toLowerCase().includes('cod') ||
+                    String(targetOrder?.payment_method || '').toLowerCase().includes('cash on delivery');
+
+      const res = await fetch(`${API_BASE}/api/zipypost`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          action: 'get_rates',
+          order_id: targetOrder.id,
+          delivery_pincode: targetOrder.pincode,
+          purchase_amount: targetOrder.total_amount || 500,
+          is_cod: isCod,
+          weight: zipypostWeight,
+          length: zipypostLength,
+          width: zipypostWidth,
+          height: zipypostHeight
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch courier rates from ZipyPost.');
+
+      const couriers = data.couriers || [];
+      if (couriers.length > 0) {
+        setZipypostCourierRates(couriers);
+        setSelectedZipyCourier(couriers[0]); // Select cheapest by default
+      } else {
+        setZipyRateError('No couriers available for this delivery pincode on ZipyPost.');
+      }
+    } catch (err) {
+      setZipyRateError(err.message || 'Server error while fetching ZipyPost rates.');
+    } finally {
+      setFetchingZipyRates(false);
+    }
+  };
+
+  const handleInitializeZipyShipment = async () => {
+    if (!selectedZipyCourier) return;
+    setZipyShipmentError('');
+    setInitializingZipyShipment(true);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      const res = await fetch(`${API_BASE}/api/zipypost`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          action: 'create_shipment',
+          order_id: zipypostOrderId,
+          courier_id: selectedZipyCourier.courier_id,
+          mode_id: selectedZipyCourier.mode_id,
+          courier_name: selectedZipyCourier.courier_name,
+          courier_rate: selectedZipyCourier.rate,
+          weight: zipypostWeight,
+          length: zipypostLength,
+          width: zipypostWidth,
+          height: zipypostHeight
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to initialize ZipyPost shipment.');
+
+      alert(`ZipyPost Shipment Booked Successfully!\nAWB: ${data.awb_number}\nCourier: ${data.courier_name}\nCharge: Rs. ${data.rate}`);
+      setShowZipyPostModal(false);
+      await fetchOrders();
+
+      if (selectedOrder && selectedOrder.id === zipypostOrderId) {
+        const updatedDetails = {
+          ...(selectedOrder.shipment_details || {}),
+          carrier: 'zipypost',
+          zipypost_awb: data.awb_number,
+          zipypost_courier_name: data.courier_name,
+          zipypost_charge: data.rate,
+          zipypost_status: 'AWB Assigned'
+        };
+        setSelectedOrder({
+          ...selectedOrder,
+          status: 'Shipped',
+          shipment_details: updatedDetails,
+          shiprocket_charge: data.rate,
+          shiprocket_courier_name: `ZipyPost (${data.courier_name})`
+        });
+      }
+    } catch (err) {
+      setZipyShipmentError(err.message || 'Failed to complete ZipyPost booking.');
+    } finally {
+      setInitializingZipyShipment(false);
+    }
+  };
+
+  const handleDownloadZipyLabel = async (order) => {
+    if (!order) return;
+    setGeneratingZipyLabel(true);
+
+    try {
+      const awb = order.shipment_details?.zipypost_awb || order.zipypost_awb || order.shiprocket_awb;
+      if (!awb) {
+        alert("No ZipyPost AWB found for this order.");
+        return;
+      }
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      const res = await fetch(`${API_BASE}/api/zipypost`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'generate_label', awb_number: awb, order_id: order.id })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to generate ZipyPost shipping label.');
+
+      if (data.label_url) {
+        window.open(data.label_url, '_blank');
+      } else {
+        alert("Label URL was not returned by ZipyPost.");
+      }
+    } catch (err) {
+      alert("ZipyPost Label Error: " + err.message);
+    } finally {
+      setGeneratingZipyLabel(false);
+    }
+  };
+
+  const handleSyncZipyOrder = async (order) => {
+    if (!order) return;
+    setSyncingZipyShipment(true);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      const res = await fetch(`${API_BASE}/api/zipypost`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'sync_shipment', order_id: order.id })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to sync with ZipyPost.');
+
+      const updatedOrder = data.order || {};
+      alert(`ZipyPost Sync Complete!\nStatus: ${updatedOrder.zipypost_status || 'Synced'}\nAWB: ${updatedOrder.zipypost_awb || 'N/A'}\nCourier: ${updatedOrder.zipypost_courier_name || 'N/A'}`);
+      await fetchOrders();
+
+      if (selectedOrder && selectedOrder.id === order.id) {
+        setSelectedOrder(prev => ({
+          ...prev,
+          status: updatedOrder.status || prev.status,
+          shipment_details: {
+            ...(prev.shipment_details || {}),
+            zipypost_status: updatedOrder.zipypost_status,
+            zipypost_courier_name: updatedOrder.zipypost_courier_name
+          }
+        }));
+      }
+    } catch (err) {
+      alert("ZipyPost Sync Error: " + err.message);
+    } finally {
+      setSyncingZipyShipment(false);
+    }
+  };
+
   // MANUAL / OFFLINE ORDER CREATION HANDLER
   const handleCreateManualOrder = async (e) => {
     e.preventDefault();
@@ -1111,27 +1334,29 @@ export default function App() {
       const doc = new jsPDF();
       doc.setFont("helvetica", "bold");
       doc.setFontSize(18);
-      doc.text("MAAZ OUD - MASTER FINANCIAL & PROFITABILITY REPORT", 14, 18);
+      doc.text("MAAZ OUD - SALES & PROFITABILITY REPORT", 14, 18);
+
+      const isFiltered = Boolean(dashboardDateFilter && dashboardDateFilter !== 'all');
+      const periodLabel = isFiltered
+        ? (dashboardDateFilter === 'custom'
+            ? `${dashboardCustomStart || 'Start'} to ${dashboardCustomEnd || 'End'}`
+            : dashboardDateFilter.replace('_', ' ').toUpperCase())
+        : 'All Time';
 
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
-      doc.text(`Generated on: ${new Date().toLocaleString()} | Administrator Ledger Record`, 14, 25);
+      doc.text(`Generated on: ${new Date().toLocaleString()} | Period: ${periodLabel} | Total Orders: ${dashboardNonCancelledOrders.length}`, 14, 25);
       doc.line(14, 28, 196, 28);
 
       // Section 1: Executive Overview Cards
       doc.setFontSize(12);
       doc.setFont("helvetica", "bold");
-      doc.text("1. Master Financial & Bank Payout Summary", 14, 36);
+      doc.text(`1. Executive Summary (${periodLabel})`, 14, 36);
 
       const overviewData = [
-        ["Total Revenue (All Non-Cancelled Orders)", `Rs. ${calculatedSalesTotal}`],
-        ["Total Courier Delivery Charges Paid", `Rs. ${calculatedDeliveryTotal}`],
-        ["Total Net Profit Margin", `Rs. ${calculatedProfitTotal}`],
-        ["Money Already Received in Bank (Prepaid Settled)", `Rs. ${financialSummary?.combined_summary?.total_already_received_in_bank || 0}`],
-        ["Money Received in Cash (Self / Hand Delivered)", `Rs. ${financialSummary?.combined_summary?.offline_self_handover_total || 0}`],
-        ["Total Received in Hand/Bank", `Rs. ${((financialSummary?.combined_summary?.total_already_received_in_bank || 0) + (financialSummary?.combined_summary?.offline_self_handover_total || 0)).toLocaleString('en-IN')}`],
-        ["Immediate Bank Payout Due (Delivered COD + Unsettled)", `Rs. ${financialSummary?.combined_summary?.total_pending_bank_payout || 0}`],
-        ["Total COD Pipeline Value (Shipped + Delivered)", `Rs. ${financialSummary?.combined_summary?.cod_pipeline_total || 0}`],
+        [isFiltered ? "Total Sales (Filtered Period)" : "Total Sales", `Rs. ${dashboardCalculatedSalesTotal.toLocaleString('en-IN')}`],
+        ["Total Shipping / Delivery Cost", `Rs. ${dashboardCalculatedDeliveryTotal.toLocaleString('en-IN')}`],
+        ["Total Net Profit", `Rs. ${dashboardCalculatedProfitTotal.toLocaleString('en-IN')}`]
       ];
 
       autoTable(doc, {
@@ -1149,7 +1374,7 @@ export default function App() {
       const currentY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 12 : 120;
       doc.text("2. Order-by-Order Profitability Ledger", 14, currentY);
 
-      const tableRows = nonCancelledOrders.map(order => {
+      const tableRows = dashboardNonCancelledOrders.map(order => {
         const { baseCost, deliveryCost, hasDeliveryCost, sellingPrice, profit } = calculateOrderProfit(order, products);
         return [
           order.id,
@@ -1463,6 +1688,32 @@ export default function App() {
     return sum + (hasDeliveryCost ? profit : 0);
   }, 0).toFixed(2));
 
+  // Dashboard date-filtered orders and calculations
+  const isDashboardDateFiltered = dashboardDateFilter && dashboardDateFilter !== 'all';
+  const dashboardOrders = isDashboardDateFiltered 
+    ? orders.filter(o => isOrderInDateRange(o, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd))
+    : orders;
+  const dashboardNonCancelledOrders = dashboardOrders.filter(o => getOrderStatus(o) !== 'Cancelled');
+  const dashboardDeliveredOrders = dashboardOrders.filter(o => getOrderStatus(o) === 'Delivered');
+
+  const dashboardOrderStatusCounts = {
+    All: dashboardOrders.length,
+    Processing: dashboardOrders.filter(o => getOrderStatus(o) === 'Processing' || o.status === 'Placed').length,
+    Shipped: dashboardOrders.filter(o => getOrderStatus(o) === 'Shipped').length,
+    Delivered: dashboardDeliveredOrders.length,
+    Cancelled: dashboardOrders.filter(o => getOrderStatus(o) === 'Cancelled').length
+  };
+
+  const dashboardCalculatedSalesTotal = Number(dashboardNonCancelledOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0).toFixed(2));
+  const dashboardCalculatedDeliveryTotal = Number(dashboardNonCancelledOrders.reduce((sum, o) => {
+    const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(o, products);
+    return sum + (hasDeliveryCost ? deliveryCost : 0);
+  }, 0).toFixed(2));
+  const dashboardCalculatedProfitTotal = Number(dashboardNonCancelledOrders.reduce((sum, o) => {
+    const { profit, hasDeliveryCost } = calculateOrderProfit(o, products);
+    return sum + (hasDeliveryCost ? profit : 0);
+  }, 0).toFixed(2));
+
   const filteredOrders = orders.filter(order => {
     const query = String(orderSearchQuery || '').toLowerCase().trim();
     const matchesSearch = String(order.id || '').toLowerCase().includes(query) ||
@@ -1551,30 +1802,37 @@ export default function App() {
             <DashboardView
               activeTab={activeTab}
               handleDownloadSalesProfitReport={handleDownloadSalesProfitReport}
-              orderStatusCounts={orderStatusCounts}
+              orderStatusCounts={dashboardOrderStatusCounts}
               setDeliveredDateFilter={setDeliveredDateFilter}
               setShowDeliveredListModal={setShowDeliveredListModal}
               deliveredCounts={deliveredCounts}
               deliveredCountsToday={deliveredCounts.today}
-              calculatedSalesTotal={calculatedSalesTotal}
+              calculatedSalesTotal={dashboardCalculatedSalesTotal}
               setShowSalesListModal={setShowSalesListModal}
-              calculatedDeliveryTotal={calculatedDeliveryTotal}
+              calculatedDeliveryTotal={dashboardCalculatedDeliveryTotal}
               setShowProfitListModal={setShowProfitListModal}
-              calculatedProfitTotal={calculatedProfitTotal}
+              calculatedProfitTotal={dashboardCalculatedProfitTotal}
               financialSummary={financialSummary}
               loadingFinancials={loadingFinancials}
               fetchFinancialSummary={fetchFinancialSummary}
               setShowFinancialModal={setShowFinancialModal}
               setShowManualOrderModal={setShowManualOrderModal}
               products={products}
-              orders={orders}
+              orders={dashboardOrders}
+              allOrders={orders}
               setSelectedOrder={setSelectedOrder}
               dashboardDeliveredFilter={dashboardDeliveredFilter}
               setDashboardDeliveredFilter={setDashboardDeliveredFilter}
               filterDeliveredOrdersByDate={filterDeliveredOrdersByDate}
-              allDeliveredOrders={allDeliveredOrders}
+              allDeliveredOrders={dashboardDeliveredOrders}
               deliveredRevenues={deliveredRevenues}
               getOrderDeliveryDate={getOrderDeliveryDate}
+              dashboardDateFilter={dashboardDateFilter}
+              setDashboardDateFilter={setDashboardDateFilter}
+              dashboardCustomStart={dashboardCustomStart}
+              setDashboardCustomStart={setDashboardCustomStart}
+              dashboardCustomEnd={dashboardCustomEnd}
+              setDashboardCustomEnd={setDashboardCustomEnd}
             />
 
             <CategoriesView
@@ -1713,6 +1971,20 @@ export default function App() {
         pendingStatusUpdate={pendingStatusUpdate}
         setPendingStatusUpdate={setPendingStatusUpdate}
         confirmOrderStatusUpdate={confirmOrderStatusUpdate}
+        setShowZipyPostModal={setShowZipyPostModal}
+        setZipypostOrderId={setZipypostOrderId}
+        setZipypostCourierRates={setZipypostCourierRates}
+        setSelectedZipyCourier={setSelectedZipyCourier}
+        setZipyRateError={setZipyRateError}
+        setZipyShipmentError={setZipyShipmentError}
+        setZipypostWeight={setZipypostWeight}
+        setZipypostLength={setZipypostLength}
+        setZipypostWidth={setZipypostWidth}
+        setZipypostHeight={setZipypostHeight}
+        handleDownloadZipyLabel={handleDownloadZipyLabel}
+        handleSyncZipyOrder={handleSyncZipyOrder}
+        generatingZipyLabel={generatingZipyLabel}
+        syncingZipyShipment={syncingZipyShipment}
       />
 
       <ShiprocketModal
@@ -1740,21 +2012,44 @@ export default function App() {
         handleInitializeShipment={handleInitializeShipment}
       />
 
+      <ZipyPostModal
+        showZipyPostModal={showZipyPostModal}
+        setShowZipyPostModal={setShowZipyPostModal}
+        zipypostOrderId={zipypostOrderId}
+        zipypostWeight={zipypostWeight}
+        setZipypostWeight={setZipypostWeight}
+        zipypostLength={zipypostLength}
+        setZipypostLength={setZipypostLength}
+        zipypostWidth={zipypostWidth}
+        setZipypostWidth={setZipypostWidth}
+        zipypostHeight={zipypostHeight}
+        setZipypostHeight={setZipypostHeight}
+        zipypostCourierRates={zipypostCourierRates}
+        fetchingZipyRates={fetchingZipyRates}
+        zipyRateError={zipyRateError}
+        zipyShipmentError={zipyShipmentError}
+        selectedZipyCourier={selectedZipyCourier}
+        setSelectedZipyCourier={setSelectedZipyCourier}
+        initializingZipyShipment={initializingZipyShipment}
+        handleFetchZipyCourierRates={handleFetchZipyCourierRates}
+        handleInitializeZipyShipment={handleInitializeZipyShipment}
+      />
+
       <SalesListModal
         showSalesListModal={showSalesListModal}
         setShowSalesListModal={setShowSalesListModal}
-        nonCancelledOrders={nonCancelledOrders}
-        calculatedSalesTotal={calculatedSalesTotal}
+        nonCancelledOrders={dashboardNonCancelledOrders}
+        calculatedSalesTotal={dashboardCalculatedSalesTotal}
       />
 
       <ProfitListModal
         showProfitListModal={showProfitListModal}
         setShowProfitListModal={setShowProfitListModal}
-        nonCancelledOrders={nonCancelledOrders}
+        nonCancelledOrders={dashboardNonCancelledOrders}
         products={products}
-        calculatedSalesTotal={calculatedSalesTotal}
-        calculatedDeliveryTotal={calculatedDeliveryTotal}
-        calculatedProfitTotal={calculatedProfitTotal}
+        calculatedSalesTotal={dashboardCalculatedSalesTotal}
+        calculatedDeliveryTotal={dashboardCalculatedDeliveryTotal}
+        calculatedProfitTotal={dashboardCalculatedProfitTotal}
         inlineEditingCell={inlineEditingCell}
         setInlineEditingCell={setInlineEditingCell}
         inlineEditValue={inlineEditValue}

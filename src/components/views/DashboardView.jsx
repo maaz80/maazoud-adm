@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   FiList,
   FiClock,
@@ -10,11 +10,15 @@ import {
   FiDollarSign,
   FiCreditCard,
   FiRefreshCw,
-  FiArrowUpRight,
   FiLayers,
-  FiShoppingBag
+  FiShoppingBag,
+  FiXCircle,
+  FiCalendar
 } from 'react-icons/fi';
-import { calculateOrderProfit } from '../../utils/helpers';
+import { calculateOrderProfit, isOrderInDateRange } from '../../utils/helpers';
+import StoreMetricsModal from '../modals/StoreMetricsModal';
+
+const formatApprox = (val) => Math.round(parseFloat(val) || 0).toLocaleString('en-IN');
 
 export default function DashboardView({
   activeTab,
@@ -42,9 +46,19 @@ export default function DashboardView({
   filterDeliveredOrdersByDate,
   allDeliveredOrders,
   deliveredRevenues,
-  getOrderDeliveryDate
+  getOrderDeliveryDate,
+  dashboardDateFilter = 'all',
+  setDashboardDateFilter,
+  dashboardCustomStart = '',
+  setDashboardCustomStart,
+  dashboardCustomEnd = '',
+  setDashboardCustomEnd
 }) {
+  const [storeMetricModalType, setStoreMetricModalType] = useState(null);
+
   if (activeTab !== 'dashboard') return null;
+
+  const isDateFiltered = Boolean(dashboardDateFilter && dashboardDateFilter !== 'all');
 
   // --- Dynamic Razorpay & Payout Calculations ---
   const nonCancelledOrders = (orders || []).filter(o => o.status !== 'Cancelled');
@@ -63,40 +77,115 @@ export default function DashboardView({
 
   const isRzpApiConnected = Boolean(financialSummary?.razorpay?.connected);
 
-  const razorpaySettledAmount = isRzpApiConnected
-    ? (financialSummary?.razorpay?.total_settled ?? localRzpSettledSum)
-    : (financialSummary?.local_metrics?.prepaid_delivered_total ?? localRzpSettledSum);
+  // Filter schedules inside financialSummary when a date filter is selected
+  const filteredFinancialSummary = useMemo(() => {
+    if (!financialSummary) return financialSummary;
+    if (!isDateFiltered) return financialSummary;
 
-  const razorpayPendingAmount = isRzpApiConnected
-    ? (financialSummary?.razorpay?.unsettled_balance ?? localRzpPendingSum)
-    : (((financialSummary?.local_metrics?.prepaid_shipped_total || 0) + (financialSummary?.local_metrics?.prepaid_processing_total || 0)) || localRzpPendingSum);
+    const filterSchedule = (arr) => {
+      if (!Array.isArray(arr)) return [];
+      return arr.filter(item => isOrderInDateRange(item, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd));
+    };
 
-  const razorpayTotalCaptured = isRzpApiConnected
-    ? (financialSummary?.razorpay?.total_captured ?? localRzpTotalSum)
-    : (financialSummary?.local_metrics?.prepaid_razorpay_total ?? localRzpTotalSum);
+    return {
+      ...financialSummary,
+      razorpay: financialSummary.razorpay ? {
+        ...financialSummary.razorpay,
+        settlements_schedule: filterSchedule(financialSummary.razorpay.settlements_schedule),
+        pending_schedule: filterSchedule(financialSummary.razorpay.pending_schedule),
+      } : financialSummary.razorpay,
+      shiprocket: financialSummary.shiprocket ? {
+        ...financialSummary.shiprocket,
+        remittances_schedule: filterSchedule(financialSummary.shiprocket.remittances_schedule),
+      } : financialSummary.shiprocket,
+      zipypost: financialSummary.zipypost ? {
+        ...financialSummary.zipypost,
+        remittances_schedule: filterSchedule(financialSummary.zipypost.remittances_schedule),
+      } : financialSummary.zipypost,
+      courier_combined: financialSummary.courier_combined ? {
+        ...financialSummary.courier_combined,
+        remittances_schedule: filterSchedule(financialSummary.courier_combined.remittances_schedule),
+        pending_schedule: filterSchedule(financialSummary.courier_combined.pending_schedule),
+      } : financialSummary.courier_combined
+    };
+  }, [financialSummary, isDateFiltered, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd]);
+
+  const rzpSettledFilteredSum = (filteredFinancialSummary?.razorpay?.settlements_schedule || []).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+  const rzpPendingFilteredSum = (filteredFinancialSummary?.razorpay?.pending_schedule || []).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+
+  const razorpaySettledAmount = isDateFiltered
+    ? (isRzpApiConnected && rzpSettledFilteredSum > 0 ? rzpSettledFilteredSum : localRzpSettledSum)
+    : (isRzpApiConnected
+        ? (financialSummary?.razorpay?.total_settled ?? localRzpSettledSum)
+        : (financialSummary?.local_metrics?.prepaid_delivered_total ?? localRzpSettledSum));
+
+  const razorpayPendingAmount = isDateFiltered
+    ? (isRzpApiConnected && rzpPendingFilteredSum > 0 ? rzpPendingFilteredSum : localRzpPendingSum)
+    : (isRzpApiConnected
+        ? (financialSummary?.razorpay?.unsettled_balance ?? localRzpPendingSum)
+        : (((financialSummary?.local_metrics?.prepaid_shipped_total || 0) + (financialSummary?.local_metrics?.prepaid_processing_total || 0)) || localRzpPendingSum));
+
+  const razorpayTotalCaptured = isDateFiltered
+    ? localRzpTotalSum
+    : (isRzpApiConnected
+        ? (financialSummary?.razorpay?.total_captured ?? localRzpTotalSum)
+        : (financialSummary?.local_metrics?.prepaid_razorpay_total ?? localRzpTotalSum));
 
   const settledPercentage = razorpayTotalCaptured > 0
     ? Math.min(100, Math.round((razorpaySettledAmount / razorpayTotalCaptured) * 100))
     : 0;
 
   // --- Dynamic Offline Sales Calculations ---
-  const offlineOrders = nonCancelledOrders.filter(o => {
+  const isHandDelivered = (o) => {
     const pm = String(o.payment_method || '').toLowerCase();
-    return pm.includes('offline') || pm.includes('cash (offline)') || String(o.id || '').startsWith('ORD-OFFLINE');
-  });
+    if (pm.includes('razorpay') || pm.includes('payment id') || pm.includes('prepaid')) return false;
+    const courier = String(o.shiprocket_courier_name || '').toLowerCase();
+    const id = String(o.id || '');
+    return pm.includes('offline') || pm.includes('cash (offline)') || courier.includes('hand delivered') || courier.includes('direct') || courier.includes('self handover') || id.startsWith('ORD-OFFLINE');
+  };
 
-  const offlineSalesTotal = offlineOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+  const offlineOrders = nonCancelledOrders.filter(isHandDelivered);
+  const offlineSalesTotal = isDateFiltered
+    ? offlineOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0)
+    : (financialSummary?.combined_summary?.offline_sales_total ?? offlineOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0));
+  const offlineOrdersCount = isDateFiltered
+    ? offlineOrders.length
+    : (financialSummary?.combined_summary?.offline_orders_count ?? offlineOrders.length);
 
   const offlineProfitTotal = Number(offlineOrders.reduce((sum, o) => {
     const { profit } = calculateOrderProfit(o, products);
     return sum + profit;
   }, 0).toFixed(2));
 
-  // --- Dynamic COD & Shiprocket Remittance Calculations ---
+  // --- Dynamic COD & Courier Remittance Calculations ---
   const codOrders = nonCancelledOrders.filter(o => {
-    const pm = String(o.payment_method || '').toLowerCase();
-    return (pm.includes('cod') || pm.includes('cash on delivery')) && !pm.includes('offline');
+    const pm = String(o?.payment_method || '').toLowerCase();
+    return (pm.includes('cod') || pm.includes('cash on delivery')) && !isHandDelivered(o);
   });
+
+  const localCodOrdersSum = codOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+  const totalCodAmount = isDateFiltered
+    ? (offlineSalesTotal + localCodOrdersSum)
+    : (financialSummary?.combined_summary?.total_cod_revenue ?? (offlineSalesTotal + localCodOrdersSum));
+  const totalCodCount = isDateFiltered
+    ? (offlineOrders.length + codOrders.length)
+    : (financialSummary?.combined_summary?.total_cod_orders_count ?? (offlineOrders.length + codOrders.length));
+
+  const totalCodProfitTotal = Number([...offlineOrders, ...codOrders].reduce((sum, o) => {
+    const { profit } = calculateOrderProfit(o, products);
+    return sum + profit;
+  }, 0).toFixed(2));
+
+  // --- Dynamic Online Sales Calculations ---
+  const onlineOrders = nonCancelledOrders.filter(o => {
+    const pm = String(o?.payment_method || '').toLowerCase();
+    return (pm.includes('razorpay') || pm.includes('payment id') || pm.includes('prepaid')) && !isHandDelivered(o);
+  });
+  const onlineSalesTotal = Number(onlineOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0).toFixed(2));
+  const onlineProfitTotal = Number(onlineOrders.reduce((sum, o) => {
+    const { profit } = calculateOrderProfit(o, products);
+    return sum + profit;
+  }, 0).toFixed(2));
 
   const codDeliveredOrders = codOrders.filter(o => o.status === 'Delivered');
   const codShippedOrders = codOrders.filter(o => o.status === 'Shipped');
@@ -106,35 +195,129 @@ export default function DashboardView({
   const localCodShippedSum = codShippedOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
   const localCodProcessingSum = codProcessingOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
 
+  const localCodDeliveredRemittedSum = codDeliveredOrders.filter(o => 
+    Boolean(o.is_paid) ||
+    Boolean(o.cod_remitted) ||
+    String(o.payment_status || '').toLowerCase() === 'paid' ||
+    Boolean(o.shipment_details?.cod_remitted) ||
+    Boolean(o.shipment_details?.is_paid)
+  ).reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+  const localCodDeliveredPendingSum = codDeliveredOrders.filter(o => 
+    !Boolean(o.is_paid) &&
+    !Boolean(o.cod_remitted) &&
+    String(o.payment_status || '').toLowerCase() !== 'paid' &&
+    !Boolean(o.shipment_details?.cod_remitted) &&
+    !Boolean(o.shipment_details?.is_paid)
+  ).reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
   const isSrConnected = Boolean(financialSummary?.shiprocket?.connected);
+  const isZpConnected = Boolean(financialSummary?.zipypost?.connected);
 
-  // 1. COD Remitted to Bank (Already Received)
-  const codReceivedInBank = isSrConnected
-    ? (financialSummary?.combined_summary?.cod_already_received_in_bank || 0)
+  const courierRemittedFilteredSum = (filteredFinancialSummary?.courier_combined?.remittances_schedule || []).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+  const courierPendingFilteredSum = (filteredFinancialSummary?.courier_combined?.pending_schedule || []).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+
+  // 1. Courier COD Received in Bank (Shiprocket + ZipyPost)
+  const srReceived = isSrConnected
+    ? (financialSummary?.shiprocket?.cod_received_in_bank || 0)
+    : (financialSummary?.local_metrics?.cod_delivered_remitted_total || 0);
+  const zpReceived = isZpConnected
+    ? (financialSummary?.zipypost?.cod_received_in_bank || 0)
     : 0;
+  const courierCodReceived = isDateFiltered
+    ? ((isSrConnected || isZpConnected) && courierRemittedFilteredSum > 0 ? courierRemittedFilteredSum : localCodDeliveredRemittedSum)
+    : (financialSummary?.combined_summary?.courier_cod_received_in_bank ?? (srReceived + zpReceived));
 
-  // 2. Shiprocket Upcoming Remittance (Delivered Pending Remittance)
-  const shiprocketUpcomingRemittance = isSrConnected
+  // 2. Courier COD Pending Payout (Shiprocket + ZipyPost)
+  const srPending = isSrConnected
     ? (financialSummary?.shiprocket?.upcoming_remittance_total ?? localCodDeliveredSum)
     : (financialSummary?.combined_summary?.cod_delivered_pending ?? localCodDeliveredSum);
+  const zpPending = isZpConnected
+    ? (financialSummary?.zipypost?.upcoming_remittance_total || 0)
+    : 0;
+  const inTransitPending = financialSummary?.local_metrics?.cod_shipped_total ?? localCodShippedSum;
+  const courierCodPending = isDateFiltered
+    ? ((isSrConnected || isZpConnected) && courierPendingFilteredSum > 0 ? courierPendingFilteredSum : (localCodDeliveredPendingSum + localCodShippedSum))
+    : (financialSummary?.combined_summary?.courier_cod_pending_payout ?? (srPending + zpPending + inTransitPending));
+
+  // Backward compatible references for legacy cards and widgets
+  const codReceivedInBank = courierCodReceived;
+  const shiprocketUpcomingRemittance = srPending;
 
   // Exact count of orders in Shiprocket upcoming remittance
   const shiprocketUpcomingCount = isSrConnected && Array.isArray(financialSummary?.shiprocket?.remittances_schedule)
     ? financialSummary.shiprocket.remittances_schedule.filter(r => r.status === 'Pending Payout').length
     : codDeliveredOrders.filter(o => !o.shipment_details?.cod_remitted).length;
 
-  // 3. Total Future Expected COD Revenue (Processing + Shipped + Delivered Pending)
-  const totalFutureCodExpected = localCodProcessingSum + localCodShippedSum + shiprocketUpcomingRemittance;
+  // Total Future Expected COD Revenue (Processing + Shipped + Delivered Pending)
+  const totalFutureCodExpected = localCodProcessingSum + localCodShippedSum + srPending;
 
   return (
     <div className="space-y-6 font-sans text-stone-800 pb-8">
       {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-200">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-stone-200">
         <div>
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#8c6239]">Store Performance & Financial Ledger</h2>
           <p className="text-[11px] text-stone-500 mt-0.5">Simple overview of online sales, Shiprocket COD, direct offline cash, and store metrics</p>
         </div>
-        <div className="flex items-center gap-2">
+
+        {/* Date Filter & Action Buttons */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Date / Period Filter Dropdown */}
+          <div className="flex items-center gap-1.5 bg-white border border-stone-200 rounded px-2.5 py-1.5 shadow-2xs">
+            <FiCalendar className="text-[#8c6239] shrink-0" size={13} />
+            <select
+              value={dashboardDateFilter}
+              onChange={(e) => setDashboardDateFilter(e.target.value)}
+              className="bg-transparent text-[11px] font-bold uppercase tracking-wider text-stone-700 outline-none cursor-pointer"
+              title="Filter dashboard data by date or period"
+            >
+              <option value="all">All Time</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="this_week">This Week (Last 7 Days)</option>
+              <option value="this_month">This Month</option>
+              <option value="last_month">Last Month</option>
+              <option value="custom">Custom Date Range</option>
+            </select>
+
+            {dashboardDateFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDashboardDateFilter('all');
+                  setDashboardCustomStart('');
+                  setDashboardCustomEnd('');
+                }}
+                className="ml-1 text-stone-400 hover:text-stone-800 font-bold text-xs px-1 hover:bg-stone-100 rounded"
+                title="Reset date filter to All Time"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* Custom Date Pickers (Visible only when 'custom' is selected) */}
+          {dashboardDateFilter === 'custom' && (
+            <div className="flex items-center gap-1.5 bg-white border border-stone-200 rounded px-2.5 py-1 shadow-2xs text-[11px]">
+              <input
+                type="date"
+                value={dashboardCustomStart}
+                onChange={(e) => setDashboardCustomStart(e.target.value)}
+                className="bg-stone-50 border border-stone-200 rounded px-1.5 py-0.5 text-stone-700 text-[11px] outline-none"
+                title="Start Date"
+              />
+              <span className="text-stone-400 text-xs font-semibold">to</span>
+              <input
+                type="date"
+                value={dashboardCustomEnd}
+                onChange={(e) => setDashboardCustomEnd(e.target.value)}
+                className="bg-stone-50 border border-stone-200 rounded px-1.5 py-0.5 text-stone-700 text-[11px] outline-none"
+                title="End Date"
+              />
+            </div>
+          )}
+
           <button
             onClick={fetchFinancialSummary}
             disabled={loadingFinancials}
@@ -153,311 +336,33 @@ export default function DashboardView({
         </div>
       </div>
 
-      {/* 💳, 🚚 & 🤝 PAYOUT & SALES TRACKERS GRID (3 COLUMNS: ONLINE, COD, OFFLINE) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* 💳 1. RAZORPAY BANK PAYOUT BOX */}
-        <div className="bg-white border border-stone-200 rounded-md p-5 shadow-2xs space-y-4 flex flex-col justify-between">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-stone-150 pb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded bg-stone-100 text-stone-700 border border-stone-200">
-                <FiCreditCard size={18} />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900">
-                    Razorpay Settlements
-                  </h3>
-                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
-                    isRzpApiConnected 
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                      : 'bg-stone-100 text-stone-600 border-stone-200'
-                  }`}>
-                    {isRzpApiConnected ? 'Live API' : 'Order Sync'}
-                  </span>
-                </div>
-                <p className="text-[10px] text-stone-500 mt-0.5">Online prepaid payouts</p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowFinancialModal(true)}
-              className="text-[10px] font-bold text-[#8c6239] hover:text-stone-900 uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1"
-            >
-              Details &rarr;
-            </button>
-          </div>
-
-          {/* Metrics 3 Cards */}
-          <div className="grid grid-cols-1 gap-2.5 my-auto">
-            {/* Card 1: Bank Me Aa Chuka */}
-            <div className="bg-stone-50/80 border border-stone-200 p-3.5 rounded space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase font-bold text-emerald-700 tracking-wider">Bank Me Aa Chuka</span>
-                <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200">
-                  {rzpDeliveredOrders.length} Orders
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">
-                ₹ {razorpaySettledAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[9px] text-stone-500">Credited to Bank Account</p>
-            </div>
-
-            {/* Card 2: Bank Me Aane Wala */}
-            <div className="bg-stone-50/80 border border-stone-200 p-3.5 rounded space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase font-bold text-amber-700 tracking-wider">Bank Me Aane Wala</span>
-                <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200">
-                  {rzpPendingOrders.length} Orders
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">
-                ₹ {razorpayPendingAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[9px] text-stone-500">Captured, pending bank transfer</p>
-            </div>
-
-            {/* Card 3: Total Online */}
-            <div className="bg-stone-50/80 border border-stone-200 p-3.5 rounded space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase font-bold text-stone-600 tracking-wider">Total Online</span>
-                <span className="text-[9px] font-semibold text-stone-700 bg-stone-100 px-1 py-0.2 rounded border border-stone-200">
-                  {prepaidOrders.length} Prepaid
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">
-                ₹ {razorpayTotalCaptured.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[9px] text-stone-500">{settledPercentage}% Settled to Bank</p>
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="bg-stone-50 border border-stone-200 p-2.5 rounded text-xs space-y-1.5">
-            <div className="flex justify-between text-[10px] text-stone-600">
-              <span>Settlement Progress</span>
-              <span className="font-mono">
-                <strong className="text-emerald-700">₹{razorpaySettledAmount.toLocaleString('en-IN')}</strong> in Bank
-              </span>
-            </div>
-            <div className="w-full h-2 bg-stone-200 rounded overflow-hidden flex">
-              <div style={{ width: `${settledPercentage}%` }} className="bg-emerald-600 h-full"></div>
-              <div style={{ width: `${100 - settledPercentage}%` }} className="bg-amber-500 h-full"></div>
-            </div>
-          </div>
-        </div>
-
-        {/* 🚚 2. SHIPROCKET COD PAYOUT BOX */}
-        <div className="bg-white border border-stone-200 rounded-md p-5 shadow-2xs space-y-4 flex flex-col justify-between">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-stone-150 pb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded bg-stone-100 text-stone-700 border border-stone-200">
-                <FiTruck size={18} />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900">
-                    Shiprocket COD Payouts
-                  </h3>
-                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
-                    isSrConnected 
-                      ? 'bg-purple-50 text-purple-700 border-purple-200' 
-                      : 'bg-stone-100 text-stone-600 border-stone-200'
-                  }`}>
-                    {isSrConnected ? 'Live API' : 'Order Sync'}
-                  </span>
-                </div>
-                <p className="text-[10px] text-stone-500 mt-0.5">Courier cash remittances</p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowFinancialModal(true)}
-              className="text-[10px] font-bold text-[#8c6239] hover:text-stone-900 uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1"
-            >
-              Details &rarr;
-            </button>
-          </div>
-
-          {/* Metrics 3 Cards */}
-          <div className="grid grid-cols-1 gap-2.5 my-auto">
-            {/* Card 1: Bank Me Aa Gaya */}
-            <div className="bg-stone-50/80 border border-stone-200 p-3.5 rounded space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase font-bold text-emerald-700 tracking-wider">Bank Me Aa Gaya</span>
-                <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200">
-                  Remitted
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">
-                ₹ {codReceivedInBank.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[9px] text-stone-500">COD remitted to bank account</p>
-            </div>
-
-            {/* Card 2: Shiprocket Upcoming */}
-            <div className="bg-stone-50/80 border border-stone-200 p-3.5 rounded space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase font-bold text-purple-700 tracking-wider">Upcoming Payout</span>
-                <span className="text-[9px] font-semibold text-purple-700 bg-purple-50 px-1 py-0.2 rounded border border-purple-200">
-                  {shiprocketUpcomingCount} Delivered
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">
-                ₹ {shiprocketUpcomingRemittance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[9px] text-stone-500">Delivered COD pending remittance</p>
-            </div>
-
-            {/* Card 3: Future Total Expected */}
-            <div className="bg-stone-50/80 border border-stone-200 p-3.5 rounded space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase font-bold text-amber-700 tracking-wider">Future Total COD</span>
-                <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200">
-                  {codOrders.length} Active COD
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">
-                ₹ {totalFutureCodExpected.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[9px] text-stone-500">Processing + Shipped + Delivered</p>
-            </div>
-          </div>
-
-          {/* Breakdown Pills */}
-          <div className="bg-stone-50 border border-stone-200 p-2.5 rounded text-xs space-y-1">
-            <span className="text-[10px] font-bold text-stone-600 block uppercase tracking-wider">
-              COD Pipeline Breakdown:
+      {/* Active Date Filter Notice Banner */}
+      {isDateFiltered && (
+        <div className="bg-[#8c6239]/10 border border-[#8c6239]/30 rounded-md px-3.5 py-2 flex items-center justify-between text-xs text-stone-700">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#8c6239] animate-pulse"></span>
+            <span className="font-semibold text-[#8c6239]">Filtered Period:</span>
+            <span className="capitalize font-medium">
+              {dashboardDateFilter === 'custom'
+                ? `${dashboardCustomStart || 'Start'} to ${dashboardCustomEnd || 'End'}`
+                : dashboardDateFilter.replace('_', ' ')}
             </span>
-            <div className="grid grid-cols-3 gap-1.5 text-[9px] font-mono">
-              <div className="bg-white border border-stone-200 px-1.5 py-1 rounded flex justify-between items-center">
-                <span className="text-stone-600">Del:</span>
-                <strong className="text-purple-700">₹{shiprocketUpcomingRemittance.toLocaleString('en-IN')}</strong>
-              </div>
-              <div className="bg-white border border-stone-200 px-1.5 py-1 rounded flex justify-between items-center">
-                <span className="text-stone-600">Ship:</span>
-                <strong className="text-blue-700">₹{localCodShippedSum.toLocaleString('en-IN')}</strong>
-              </div>
-              <div className="bg-white border border-stone-200 px-1.5 py-1 rounded flex justify-between items-center">
-                <span className="text-stone-600">Proc:</span>
-                <strong className="text-amber-700">₹{localCodProcessingSum.toLocaleString('en-IN')}</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 🤝 3. DIRECT OFFLINE & CASH SALES BOX */}
-        <div className="bg-white border border-stone-200 rounded-md p-5 shadow-2xs space-y-4 flex flex-col justify-between">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-stone-150 pb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded bg-stone-100 text-stone-700 border border-stone-200">
-                <FiDollarSign size={18} />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900">
-                    Offline & Cash Sales
-                  </h3>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
-                    Cash In Hand
-                  </span>
-                </div>
-                <p className="text-[10px] text-stone-500 mt-0.5">Handover sales & manual orders</p>
-              </div>
-            </div>
-
-            {setShowManualOrderModal && (
-              <button
-                type="button"
-                onClick={() => setShowManualOrderModal(true)}
-                className="bg-[#8c6239] hover:bg-stone-900 text-white text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded transition-all cursor-pointer"
-              >
-                + Add Order
-              </button>
-            )}
-          </div>
-
-          {/* Metrics 3 Cards */}
-          <div className="grid grid-cols-1 gap-2.5 my-auto">
-            {/* Card 1: Total Cash In Hand */}
-            <div className="bg-stone-50/80 border border-stone-200 p-3.5 rounded space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase font-bold text-emerald-700 tracking-wider">Total Cash In Hand</span>
-                <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200">
-                  {offlineOrders.length} Orders
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">
-                ₹ {offlineSalesTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[9px] text-stone-500">100% Direct cash received</p>
-            </div>
-
-            {/* Card 2: Offline Profit */}
-            <div className="bg-stone-50/80 border border-stone-200 p-3.5 rounded space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase font-bold text-[#8c6239] tracking-wider">Net Offline Profit</span>
-                <span className="text-[9px] font-semibold text-[#8c6239] bg-amber-50 px-1 py-0.2 rounded border border-amber-200">
-                  Direct Profit
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">
-                ₹ {offlineProfitTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </h3>
-              <p className="text-[9px] text-stone-500">Earned profit on local sales</p>
-            </div>
-
-            {/* Card 3: Payment Status */}
-            <div className="bg-stone-50/80 border border-stone-200 p-3.5 rounded space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase font-bold text-stone-600 tracking-wider">Delivery Cost</span>
-                <span className="text-[9px] font-semibold text-stone-700 bg-stone-100 px-1 py-0.2 rounded border border-stone-200">
-                  ₹ 0.00 Cost
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">
-                100% Cash In Hand
-              </h3>
-              <p className="text-[9px] text-stone-500">Zero courier logistics charges</p>
-            </div>
-          </div>
-
-          {/* Recent Offline Orders Sub-list */}
-          <div className="bg-stone-50 border border-stone-200 p-2.5 rounded text-xs space-y-1">
-            <span className="text-[10px] font-bold text-stone-600 block uppercase tracking-wider">
-              Recent Offline Orders ({offlineOrders.length}):
+            <span className="text-stone-500 font-mono text-[11px]">
+              ({orders.length} order{orders.length === 1 ? '' : 's'} in selected period)
             </span>
-            {offlineOrders.length > 0 ? (
-              <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-                {offlineOrders.slice(0, 3).map(o => (
-                  <div
-                    key={o.id}
-                    onClick={() => setSelectedOrder(o)}
-                    className="bg-white border border-stone-200 p-1.5 rounded flex justify-between items-center cursor-pointer hover:bg-stone-100 transition-colors text-[9px]"
-                  >
-                    <div className="truncate max-w-[140px]">
-                      <span className="font-mono font-bold text-stone-900">{o.id}</span>
-                      <span className="ml-1.5 font-semibold text-stone-800 truncate">{o.customer_name}</span>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="font-bold text-emerald-700">₹{parseFloat(o.total_amount || 0).toLocaleString('en-IN')}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[9px] text-stone-400 italic py-0.5">No offline / manual orders recorded yet.</p>
-            )}
           </div>
+          <button
+            onClick={() => {
+              setDashboardDateFilter('all');
+              setDashboardCustomStart('');
+              setDashboardCustomEnd('');
+            }}
+            className="text-[11px] font-bold text-[#8c6239] hover:underline cursor-pointer flex items-center gap-1"
+          >
+            Reset to All Time ✕
+          </button>
         </div>
-
-      </div>
+      )}
 
       {/* 📊 ALL-IN-ONE PRIMARY STORE STATS GRID */}
       <div>
@@ -468,7 +373,7 @@ export default function DashboardView({
           <span className="text-[10px] text-stone-400 font-mono">Click card for detailed lists</span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-4">
           <div className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2">
             <div className="flex justify-between items-start">
               <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total Orders</span>
@@ -525,6 +430,24 @@ export default function DashboardView({
             </div>
           </div>
 
+          {/* Cancelled Orders Metric Box */}
+          <div 
+            onClick={() => setStoreMetricModalType('cancelled_orders')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-rose-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Cancelled Orders List"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-rose-700 tracking-wider">Cancelled</span>
+              <FiXCircle className="text-rose-600" size={18} />
+            </div>
+            <div>
+              <div className="flex items-baseline gap-2">
+                <h3 className="text-xl font-bold text-rose-900">{orderStatusCounts.Cancelled}</h3>
+              </div>
+              <p className="text-[9px] text-rose-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">Cancelled List &rarr;</p>
+            </div>
+          </div>
+
           <div 
             onClick={() => setShowSalesListModal(true)}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-[#8c6239] transition-all hover:bg-stone-50/80"
@@ -535,7 +458,7 @@ export default function DashboardView({
               <FiTrendingUp className="text-[#8c6239]" size={18} />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-[#8c6239]">Rs. {calculatedSalesTotal}</h3>
+              <h3 className="text-xl font-bold text-[#8c6239]">Rs. {formatApprox(calculatedSalesTotal)}</h3>
               <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Sales &rarr;</p>
             </div>
           </div>
@@ -550,7 +473,7 @@ export default function DashboardView({
               <FiTruck className="text-purple-600" size={18} />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-purple-600">Rs. {calculatedDeliveryTotal}</h3>
+              <h3 className="text-xl font-bold text-purple-600">Rs. {formatApprox(calculatedDeliveryTotal)}</h3>
               <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Courier &rarr;</p>
             </div>
           </div>
@@ -565,142 +488,210 @@ export default function DashboardView({
               <FiStar className="text-green-600" size={18} />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-green-600">Rs. {calculatedProfitTotal}</h3>
+              <h3 className="text-xl font-bold text-green-600">Rs. {formatApprox(calculatedProfitTotal)}</h3>
               <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Profit &rarr;</p>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* 💼 COMBINED MASTER BANK PAYOUTS & COD LEDGER (WHITE BG & LIGHT GRAY BORDER) */}
-      <div className="bg-white border border-stone-200 p-5 rounded-md shadow-2xs space-y-5">
-        <div className="flex flex-wrap justify-between items-center gap-4 border-b border-stone-150 pb-3">
-          <div>
-            <span className="text-[9px] uppercase font-bold text-[#8c6239] tracking-widest block">Combined Payout Ledger</span>
-            <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5 mt-0.5">
-              <FiDollarSign className="text-emerald-600" size={16} />
-              Master Financial & Bank Payout Breakdown
-            </h3>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={fetchFinancialSummary}
-              disabled={loadingFinancials}
-              className="bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider rounded transition-all cursor-pointer flex items-center gap-1"
-            >
-              {loadingFinancials ? 'Syncing...' : '🔄 Refresh Data'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowFinancialModal(true)}
-              className="bg-[#8c6239] hover:bg-stone-900 text-white px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider rounded transition-all cursor-pointer"
-            >
-              Detailed Schedules &rarr;
-            </button>
-          </div>
-        </div>
-
-        {/* SECTION 1: MONEY RECEIVED IN BANK */}
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between border-b border-stone-150 pb-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 flex items-center gap-1.5">
-              ✅ 1. Money Already Received (Aa chuke paise)
-            </span>
-            <span className="text-[10px] text-stone-400 font-mono">Bank Settled + Cash In Hand</span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="bg-stone-50 border border-stone-200 p-3.5 rounded">
-              <span className="text-[9px] uppercase font-bold text-stone-500 tracking-wider block">1. Total Received (Bank + Cash)</span>
-              <h3 className="text-lg font-bold text-emerald-700 mt-0.5">
-                ₹ {((financialSummary?.combined_summary?.total_already_received_in_bank || razorpaySettledAmount) + (financialSummary?.combined_summary?.offline_self_handover_total || offlineSalesTotal)).toLocaleString('en-IN')}
-              </h3>
-              <p className="text-[9px] text-stone-500 mt-0.5 font-mono">
-                Bank: ₹{razorpaySettledAmount.toLocaleString('en-IN')} + Cash: ₹{offlineSalesTotal.toLocaleString('en-IN')}
-              </p>
+        {/* ROW 2: 6 SALES & PROFIT CHANNEL BOXES (OFFLINE, TOTAL COD, ONLINE) */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          
+          {/* Box 1: Offline Sales */}
+          <div
+            onClick={() => setStoreMetricModalType('offline_sales')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-emerald-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view all Offline Sales Orders"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-emerald-700 tracking-wider">Offline Sales</span>
+              <FiDollarSign className="text-emerald-600" size={18} />
             </div>
-
-            <div className="bg-stone-50 border border-stone-200 p-3.5 rounded">
-              <span className="text-[9px] uppercase font-bold text-stone-500 tracking-wider block">2. COD Received in Bank</span>
-              <h3 className="text-lg font-bold text-purple-700 mt-0.5">
-                ₹ {codReceivedInBank.toLocaleString('en-IN')}
-              </h3>
-              <p className="text-[9px] text-stone-500 mt-0.5">Shiprocket COD payouts remitted to bank</p>
-            </div>
-
-            <div className="bg-stone-50 border border-stone-200 p-3.5 rounded">
-              <span className="text-[9px] uppercase font-bold text-stone-500 tracking-wider block">3. Razorpay Received in Bank</span>
-              <h3 className="text-lg font-bold text-blue-700 mt-0.5">
-                ₹ {razorpaySettledAmount.toLocaleString('en-IN')}
-              </h3>
-              <p className="text-[9px] text-stone-500 mt-0.5">Razorpay online settled to bank</p>
-            </div>
-
-            <div className="bg-stone-50 border border-stone-200 p-3.5 rounded">
-              <span className="text-[9px] uppercase font-bold text-stone-500 tracking-wider block">4. Direct Cash In Hand</span>
-              <h3 className="text-lg font-bold text-amber-700 mt-0.5">
-                ₹ {offlineSalesTotal.toLocaleString('en-IN')}
-              </h3>
-              <p className="text-[9px] text-stone-500 mt-0.5">
-                {offlineOrders.length} Direct Offline / Cash Orders
+            <div>
+              <h3 className="text-xl font-bold text-emerald-800">₹ {formatApprox(offlineSalesTotal)}</h3>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                {offlineOrdersCount} Direct Orders &rarr;
               </p>
             </div>
           </div>
+
+          {/* Box 2: Offline Sales Profit */}
+          <div
+            onClick={() => setStoreMetricModalType('offline_profit')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-emerald-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Offline Sales Profit breakdown"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-emerald-700 tracking-wider">Offline Profit</span>
+              <FiTrendingUp className="text-emerald-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-emerald-800">
+                ₹ {formatApprox(offlineProfitTotal)}
+              </h3>
+              <p className="text-[9px] text-emerald-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                100% Cash In Hand &rarr;
+              </p>
+            </div>
+          </div>
+
+          {/* Box 3: Total COD (Offline sales + COD order) */}
+          <div
+            onClick={() => setStoreMetricModalType('total_cod')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-amber-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Total COD Orders (Offline Cash + Courier COD)"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-amber-700 tracking-wider">Total COD Sales</span>
+              <FiLayers className="text-amber-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-amber-900">₹ {formatApprox(totalCodAmount)}</h3>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                {totalCodCount} Cash + Courier COD &rarr;
+              </p>
+            </div>
+          </div>
+
+          {/* Box 4: Total COD Profit */}
+          <div
+            onClick={() => setStoreMetricModalType('total_cod_profit')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-amber-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Total COD Profit breakdown"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-amber-700 tracking-wider">Total COD Profit</span>
+              <FiTrendingUp className="text-amber-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-amber-900">
+                ₹ {formatApprox(totalCodProfitTotal)}
+              </h3>
+              <p className="text-[9px] text-amber-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                Cash + Courier Margin &rarr;
+              </p>
+            </div>
+          </div>
+
+          {/* Box 5: Total Online Sales */}
+          <div
+            onClick={() => setStoreMetricModalType('online_sales')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-blue-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view all Online Prepaid Orders"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-blue-700 tracking-wider">Total Online Sales</span>
+              <FiCreditCard className="text-blue-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-blue-900">₹ {formatApprox(onlineSalesTotal)}</h3>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                {onlineOrders.length} Prepaid Checkout &rarr;
+              </p>
+            </div>
+          </div>
+
+          {/* Box 6: Total Online Profit */}
+          <div
+            onClick={() => setStoreMetricModalType('online_profit')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-blue-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Total Online Profit breakdown"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-blue-700 tracking-wider">Total Online Profit</span>
+              <FiTrendingUp className="text-blue-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-blue-900">
+                ₹ {formatApprox(onlineProfitTotal)}
+              </h3>
+              <p className="text-[9px] text-blue-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                Razorpay Net Margin &rarr;
+              </p>
+            </div>
+          </div>
+
         </div>
 
-        {/* SECTION 2: MONEY PENDING TO COME TO BANK */}
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between border-b border-stone-150 pb-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-amber-700 flex items-center gap-1.5">
-              ⏳ 2. Money Pending To Come To Bank (Aane baaki paise)
-            </span>
-            <span className="text-[10px] text-stone-400 font-mono">Processing + Shipped + Unsettled Orders</span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="bg-stone-50 border border-stone-200 p-3.5 rounded">
-              <span className="text-[9px] uppercase font-bold text-stone-500 tracking-wider block">5. Total Pending To Come</span>
-              <h3 className="text-lg font-bold text-amber-700 mt-0.5">
-                ₹ {(totalFutureCodExpected + razorpayPendingAmount).toLocaleString('en-IN')}
-              </h3>
-              <div className="mt-1 text-[9px] text-stone-600 font-mono space-y-0.5">
-                <div className="flex justify-between">
-                  <span>Razorpay Pending:</span>
-                  <span className="text-blue-700 font-bold">₹ {razorpayPendingAmount.toLocaleString('en-IN')}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>COD Future Total:</span>
-                  <span className="text-amber-700 font-bold">₹ {totalFutureCodExpected.toLocaleString('en-IN')}</span>
-                </div>
-              </div>
-            </div>
+        {/* ROW 3: 4 LIVE BANK SETTLEMENTS & COURIER PAYOUT METRICS */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
-            <div className="bg-stone-50 border border-stone-200 p-3.5 rounded">
-              <span className="text-[9px] uppercase font-bold text-stone-500 tracking-wider block">6. COD Total Future</span>
-              <h3 className="text-lg font-bold text-purple-700 mt-0.5">
-                ₹ {totalFutureCodExpected.toLocaleString('en-IN')}
-              </h3>
-              <div className="mt-1 text-[9px] text-stone-600 font-mono space-y-0.5">
-                <div className="flex justify-between">
-                  <span>Delivered Pending ({shiprocketUpcomingCount}):</span>
-                  <span className="text-purple-700 font-bold">₹ {shiprocketUpcomingRemittance.toLocaleString('en-IN')}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Shipped In-Transit ({codShippedOrders.length}):</span>
-                  <span className="text-blue-700 font-bold">₹ {localCodShippedSum.toLocaleString('en-IN')}</span>
-                </div>
-              </div>
+          {/* Box 7: Razorpay se kitna paisa bank me aa chuka */}
+          <div
+            onClick={() => setStoreMetricModalType('razorpay_received')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-blue-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Razorpay bank settlements"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-blue-700 tracking-wider">Razorpay in Bank</span>
+              <FiCheckCircle className="text-blue-600" size={18} />
             </div>
-
-            <div className="bg-stone-50 border border-stone-200 p-3.5 rounded">
-              <span className="text-[9px] uppercase font-bold text-stone-500 tracking-wider block">7. Razorpay Prepaid Pending</span>
-              <h3 className="text-lg font-bold text-blue-700 mt-0.5">
-                ₹ {razorpayPendingAmount.toLocaleString('en-IN')}
-              </h3>
-              <p className="text-[9px] text-stone-500 mt-0.5">Razorpay captured unsettled balance pending bank transfer</p>
+            <div>
+              <h3 className="text-xl font-bold text-blue-800">₹ {formatApprox(razorpaySettledAmount)}</h3>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                Aa Chuka Paisa &rarr;
+              </p>
             </div>
           </div>
+
+          {/* Box 8: Razorpay se kitna paisa bank me ane wala h */}
+          <div
+            onClick={() => setStoreMetricModalType('razorpay_pending')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-sky-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Razorpay pending settlements"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-sky-700 tracking-wider">Razorpay Pending</span>
+              <FiClock className="text-sky-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-sky-800">₹ {formatApprox(razorpayPendingAmount)}</h3>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                Aane Wala Paisa &rarr;
+              </p>
+            </div>
+          </div>
+
+          {/* Box 9: Shiprocket + Zipypost se kitna paisa bank me aa chuka */}
+          <div
+            onClick={() => setStoreMetricModalType('courier_received')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-purple-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Shiprocket + ZipyPost remitted payouts"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-purple-700 tracking-wider">Courier in Bank</span>
+              <FiTruck className="text-purple-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-purple-900">₹ {formatApprox(courierCodReceived)}</h3>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                Shiprocket + ZipyPost &rarr;
+              </p>
+            </div>
+          </div>
+
+          {/* Box 10: Shiprocket + zipypost se kitna paisa bank me ane wala h */}
+          <div
+            onClick={() => setStoreMetricModalType('courier_pending')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-purple-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Shiprocket + ZipyPost pending payouts"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-purple-700 tracking-wider">Courier Pending</span>
+              <FiClock className="text-purple-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-purple-900">₹ {formatApprox(courierCodPending)}</h3>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                Aane Wala Paisa &rarr;
+              </p>
+            </div>
+          </div>
+
         </div>
       </div>
+
+   
 
       {/* LOWER SECTION: RECENT ORDERS & DELIVERED QUICK LEDGER */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -732,7 +723,7 @@ export default function DashboardView({
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <span className="font-bold text-stone-900 block">Rs. {order.total_amount}</span>
+                    <span className="font-bold text-stone-900 block">Rs. {formatApprox(order.total_amount)}</span>
                     <span className={`inline-block text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded mt-0.5 ${
                       order.status === 'Delivered' 
                         ? 'bg-green-50 text-green-700 border border-green-200' 
@@ -795,7 +786,7 @@ export default function DashboardView({
                     : "All Delivered"}
             </span>
             <span className="font-bold text-green-700 font-mono">
-              {filterDeliveredOrdersByDate(allDeliveredOrders, dashboardDeliveredFilter).length} Orders &bull; Rs. {deliveredRevenues[dashboardDeliveredFilter] || 0}
+              {filterDeliveredOrdersByDate(allDeliveredOrders, dashboardDeliveredFilter).length} Orders &bull; Rs. {formatApprox(deliveredRevenues[dashboardDeliveredFilter] || 0)}
             </span>
           </div>
 
@@ -829,7 +820,7 @@ export default function DashboardView({
                         </span>
                       </div>
                       <div className="text-right shrink-0">
-                        <span className="font-bold text-green-700 block">Rs. {order.total_amount}</span>
+                        <span className="font-bold text-green-700 block">Rs. {formatApprox(order.total_amount)}</span>
                         <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
                           isRazorpay ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-purple-50 text-purple-700 border border-purple-200'
                         }`}>
@@ -857,6 +848,17 @@ export default function DashboardView({
           </div>
         </div>
       </div>
+
+      {/* 📋 STORE METRICS MODAL FOR ALL METRIC BOXES */}
+      <StoreMetricsModal
+        isOpen={Boolean(storeMetricModalType)}
+        onClose={() => setStoreMetricModalType(null)}
+        modalType={storeMetricModalType}
+        financialSummary={filteredFinancialSummary}
+        orders={orders}
+        products={products}
+        setSelectedOrder={setSelectedOrder}
+      />
     </div>
   );
 }

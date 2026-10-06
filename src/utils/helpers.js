@@ -119,10 +119,26 @@ export const calculateOrderProfit = (order, productsList) => {
   let hasDeliveryCost = false;
   let deliveryCost = 0;
 
-  if (order.shiprocket_charge !== null && order.shiprocket_charge !== undefined && !isNaN(Number(order.shiprocket_charge))) {
+  const isHandDelivered = (o) => {
+    const pm = String(o?.payment_method || '').toLowerCase();
+    const courier = String(o?.shiprocket_courier_name || '').toLowerCase();
+    const id = String(o?.id || '');
+    return pm.includes('offline') || pm.includes('cash (offline)') || courier.includes('hand delivered') || courier.includes('direct') || courier.includes('self handover') || id.startsWith('ORD-OFFLINE');
+  };
+
+  if (isHandDelivered(order)) {
+    hasDeliveryCost = true;
+    deliveryCost = 0;
+  } else if (order.shiprocket_charge !== null && order.shiprocket_charge !== undefined && !isNaN(Number(order.shiprocket_charge))) {
     const charge = parseFloat(order.shiprocket_charge);
     hasDeliveryCost = true;
-    deliveryCost = charge > 0 ? charge + 5.90 : charge;
+    // For ZipyPost shipments, charge already includes taxes
+    const isZipy = order.shipment_details?.carrier === 'zipypost' || order.shipment_details?.zipypost_awb;
+    deliveryCost = isZipy ? charge : (charge > 0 ? charge + 5.90 : charge);
+  } else if (order.shipment_details?.zipypost_charge) {
+    const charge = parseFloat(order.shipment_details.zipypost_charge);
+    hasDeliveryCost = true;
+    deliveryCost = charge;
   } else if (order.shipment_details?.assign_awb_response?.response?.data?.freight_charges) {
     const fc = parseFloat(order.shipment_details.assign_awb_response.response.data.freight_charges);
     const isCod = String(order?.payment_method || '').toLowerCase().includes('cod') || String(order?.payment_method || '').toLowerCase().includes('cash on delivery');
@@ -132,7 +148,7 @@ export const calculateOrderProfit = (order, productsList) => {
   }
 
   deliveryCost = Number(deliveryCost.toFixed(2));
-  const netProfit = hasDeliveryCost ? Number((sellingPrice - (totalBaseCost + deliveryCost)).toFixed(2)) : 0;
+  const netProfit = hasDeliveryCost ? Number((sellingPrice - (totalBaseCost + deliveryCost)).toFixed(2)) : Number((sellingPrice - totalBaseCost).toFixed(2));
 
   return {
     baseCost: Number(totalBaseCost.toFixed(2)),
@@ -155,3 +171,59 @@ export const formatDeliveryEstimate = (status, orderDateStr) => {
   if (status === 'Cancelled') return `Cancelled`;
   return `Est. Delivery: ${formatted}`;
 };
+
+export const getDateRangeBounds = (filterType, customStart, customEnd) => {
+  const now = new Date();
+  if (filterType === 'today') {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0),
+      end: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+    };
+  }
+  if (filterType === 'yesterday') {
+    const yest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    return {
+      start: new Date(yest.getFullYear(), yest.getMonth(), yest.getDate(), 0, 0, 0, 0),
+      end: new Date(yest.getFullYear(), yest.getMonth(), yest.getDate(), 23, 59, 59, 999)
+    };
+  }
+  if (filterType === 'this_week' || filterType === 'last7days') {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0),
+      end: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+    };
+  }
+  if (filterType === 'this_month') {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0),
+      end: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+    };
+  }
+  if (filterType === 'last_month') {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0),
+      end: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+    };
+  }
+  if (filterType === 'custom') {
+    return {
+      start: customStart ? new Date(`${customStart}T00:00:00`) : null,
+      end: customEnd ? new Date(`${customEnd}T23:59:59.999`) : null
+    };
+  }
+  return { start: null, end: null };
+};
+
+export const isOrderInDateRange = (order, filterType, customStart, customEnd) => {
+  if (!filterType || filterType === 'all') return true;
+  const { start, end } = getDateRangeBounds(filterType, customStart, customEnd);
+  if (!start && !end) return true;
+  const orderDateStr = order?.created_at || order?.order_date || order?.date;
+  if (!orderDateStr) return true;
+  const orderTime = new Date(orderDateStr).getTime();
+  if (isNaN(orderTime)) return true;
+  if (start && orderTime < start.getTime()) return false;
+  if (end && orderTime > end.getTime()) return false;
+  return true;
+};
+

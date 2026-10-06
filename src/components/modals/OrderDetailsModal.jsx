@@ -31,7 +31,22 @@ export default function OrderDetailsModal({
   setShowShiprocketModal,
   pendingStatusUpdate,
   setPendingStatusUpdate,
-  confirmOrderStatusUpdate
+  confirmOrderStatusUpdate,
+  // ZipyPost props
+  setShowZipyPostModal,
+  setZipypostOrderId,
+  setZipypostCourierRates,
+  setSelectedZipyCourier,
+  setZipyRateError,
+  setZipyShipmentError,
+  setZipypostWeight,
+  setZipypostLength,
+  setZipypostWidth,
+  setZipypostHeight,
+  handleDownloadZipyLabel,
+  handleSyncZipyOrder,
+  generatingZipyLabel,
+  syncingZipyShipment
 }) {
   if (!selectedOrder) return null;
 
@@ -313,7 +328,7 @@ export default function OrderDetailsModal({
             </div>
 
             {/* Shiprocket Tracking Card */}
-            {selectedOrder.shiprocket_awb && (
+            {selectedOrder.shiprocket_awb && selectedOrder.shipment_details?.carrier !== 'zipypost' && (
               <div className="bg-purple-50 p-4 rounded border border-purple-200 text-xs space-y-2 mt-4">
                 <div className="flex justify-between items-center border-b border-purple-100 pb-2">
                   <span className="text-[10px] uppercase font-bold text-purple-750 tracking-wider">Shiprocket Tracking Details</span>
@@ -398,6 +413,90 @@ export default function OrderDetailsModal({
               </div>
             )}
 
+            {/* ZipyPost Tracking Card */}
+            {(selectedOrder.shipment_details?.carrier === 'zipypost' || selectedOrder.shipment_details?.zipypost_awb) && (() => {
+              const zipyAwb = selectedOrder.shipment_details?.zipypost_awb || selectedOrder.shiprocket_awb;
+              const zipyCourier = selectedOrder.shipment_details?.zipypost_courier_name || selectedOrder.shiprocket_courier_name || 'ZipyPost Partner';
+              const zipyStatus = selectedOrder.shipment_details?.zipypost_status || selectedOrder.status || 'Shipped';
+              const zipyCharge = selectedOrder.shipment_details?.zipypost_charge || selectedOrder.shiprocket_charge || 0;
+
+              return (
+                <div className="bg-sky-50 p-4 rounded border border-sky-200 text-xs space-y-2 mt-4 animate-fadeIn">
+                  <div className="flex justify-between items-center border-b border-sky-100 pb-2">
+                    <span className="text-[10px] uppercase font-bold text-sky-800 tracking-wider flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-sky-600 inline-block"></span>
+                      ZipyPost Tracking Details
+                    </span>
+                    <span className="text-[9px] uppercase font-bold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full">
+                      {zipyStatus}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Courier Partner</span>
+                      <span className="font-semibold text-stone-900 block">{zipyCourier}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">AWB (Tracking Number)</span>
+                      <span className="font-semibold text-stone-900 font-mono block">{zipyAwb}</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Shipment Charge</span>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateDeliveryCharge(selectedOrder.id, zipyCharge)}
+                          className="text-[9px] font-bold uppercase text-sky-700 hover:underline cursor-pointer"
+                        >
+                          [Edit Charge]
+                        </button>
+                      </div>
+                      <span className="font-semibold text-stone-900 block">
+                        Rs. {zipyCharge}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Live Status API</span>
+                      <a 
+                        href={`https://api.zipypost.com/track/${zipyAwb}`} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="text-sky-600 font-bold hover:underline block"
+                      >
+                        View Tracking Status &rarr;
+                      </a>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2 border-t border-sky-100 mt-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadZipyLabel(selectedOrder)}
+                      disabled={generatingZipyLabel}
+                      className="bg-sky-600 hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all flex items-center gap-1.5"
+                    >
+                      {generatingZipyLabel ? (
+                        <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full"></span> Fetching Label…</>
+                      ) : (
+                        <>📄 Download Label</>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSyncZipyOrder(selectedOrder)}
+                      disabled={syncingZipyShipment}
+                      className="bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all flex items-center gap-1.5 ml-auto"
+                    >
+                      {syncingZipyShipment ? (
+                        <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full"></span> Syncing…</>
+                      ) : (
+                        <>🔄 Sync from ZipyPost</>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Sync Pending Shiprocket Order Banner */}
             {!selectedOrder.shiprocket_awb && (selectedOrder.shiprocket_order_id || selectedOrder.shiprocket_shipment_id) && (
               <div className="bg-amber-50 p-4 rounded border border-amber-300 text-xs space-y-2 mt-4">
@@ -450,25 +549,45 @@ export default function OrderDetailsModal({
           {/* Footer Actions */}
           <div className="px-4 sm:px-6 py-3 sm:py-4 border-t border-stone-200 bg-stone-50 flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2 sm:gap-3">
             <div className="flex flex-wrap gap-2">
-              {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && !selectedOrder.shiprocket_awb && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShiprocketOrderId(selectedOrder.id);
-                    setCourierRates([]);
-                    setSelectedCourier(null);
-                    setRateError('');
-                    setShipmentError('');
-                    setShiprocketWeight('0.5');
-                    setShiprocketLength('10');
-                    setShiprocketWidth('10');
-                    setShiprocketHeight('10');
-                    setShowShiprocketModal(true);
-                  }}
-                  className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
-                >
-                  Ship with Shiprocket
-                </button>
+              {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && !selectedOrder.shiprocket_awb && !selectedOrder.shipment_details?.zipypost_awb && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShiprocketOrderId(selectedOrder.id);
+                      setCourierRates([]);
+                      setSelectedCourier(null);
+                      setRateError('');
+                      setShipmentError('');
+                      setShiprocketWeight('0.5');
+                      setShiprocketLength('10');
+                      setShiprocketWidth('10');
+                      setShiprocketHeight('10');
+                      setShowShiprocketModal(true);
+                    }}
+                    className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
+                  >
+                    Ship with Shiprocket
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setZipypostOrderId(selectedOrder.id);
+                      setZipypostCourierRates([]);
+                      setSelectedZipyCourier(null);
+                      setZipyRateError('');
+                      setZipyShipmentError('');
+                      setZipypostWeight('0.5');
+                      setZipypostLength('10');
+                      setZipypostWidth('10');
+                      setZipypostHeight('5');
+                      setShowZipyPostModal(true);
+                    }}
+                    className="bg-sky-600 hover:bg-sky-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all flex items-center gap-1.5"
+                  >
+                    <span>🚀</span> Ship with ZipyPost
+                  </button>
+                </>
               )}
               {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && (
                 <button
