@@ -437,7 +437,30 @@ export default function OrderDetailsModal({
                       <span className="font-semibold text-stone-900 block">{zipyCourier}</span>
                     </div>
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">AWB (Tracking Number)</span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">AWB (Tracking Number)</span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const newAwb = prompt("Update ZipyPost AWB Number:", zipyAwb || '');
+                            if (!newAwb || !newAwb.trim()) return;
+                            const updatedDetails = {
+                              ...(selectedOrder.shipment_details || {}),
+                              zipypost_awb: newAwb.trim()
+                            };
+                            const { error } = await supabase.from('orders').update({ shipment_details: updatedDetails }).eq('id', selectedOrder.id);
+                            if (error) alert("Error: " + error.message);
+                            else {
+                              alert("AWB updated successfully!");
+                              await fetchOrders();
+                              setSelectedOrder(prev => ({ ...prev, shipment_details: updatedDetails }));
+                            }
+                          }}
+                          className="text-[9px] font-bold uppercase text-sky-700 hover:underline cursor-pointer"
+                        >
+                          [Edit AWB]
+                        </button>
+                      </div>
                       <span className="font-semibold text-stone-900 font-mono block">{zipyAwb}</span>
                     </div>
                     <div>
@@ -588,6 +611,54 @@ export default function OrderDetailsModal({
                     <span>🚀</span> Ship with ZipyPost
                   </button>
                 </>
+              )}
+              {selectedOrder.status !== 'Cancelled' && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const currentAwb = selectedOrder.shipment_details?.zipypost_awb || selectedOrder.shiprocket_awb || '';
+                    const inputAwb = prompt("Enter ZipyPost / Courier AWB Tracking Number:", currentAwb);
+                    if (!inputAwb || !inputAwb.trim()) return;
+
+                    const currentCourier = selectedOrder.shipment_details?.zipypost_courier_name || 'Amazon';
+                    const inputCourier = prompt("Enter Courier Name (e.g. Amazon, Delhivery, Ekart, Shadowfax):", currentCourier);
+
+                    const updatedDetails = {
+                      ...(selectedOrder.shipment_details || {}),
+                      carrier: 'zipypost',
+                      zipypost_awb: inputAwb.trim(),
+                      zipypost_courier_name: (inputCourier || 'Amazon').trim(),
+                      zipypost_status: selectedOrder.shipment_details?.zipypost_status || 'Shipped',
+                      shipped_at: selectedOrder.shipment_details?.shipped_at || new Date().toISOString()
+                    };
+
+                    const { error } = await supabase
+                      .from('orders')
+                      .update({
+                        status: selectedOrder.status === 'Processing' ? 'Shipped' : selectedOrder.status,
+                        shipment_details: updatedDetails,
+                        shiprocket_courier_name: `ZipyPost (${(inputCourier || 'Amazon').trim()})`
+                      })
+                      .eq('id', selectedOrder.id);
+
+                    if (error) {
+                      alert("Failed to update AWB: " + error.message);
+                    } else {
+                      alert("AWB linked successfully! Customer can now track this order.");
+                      await fetchOrders();
+                      setSelectedOrder(prev => ({
+                        ...prev,
+                        status: selectedOrder.status === 'Processing' ? 'Shipped' : selectedOrder.status,
+                        shipment_details: updatedDetails,
+                        shiprocket_courier_name: `ZipyPost (${(inputCourier || 'Amazon').trim()})`
+                      }));
+                    }
+                  }}
+                  className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all flex items-center gap-1.5"
+                  title="Manually link a ZipyPost or courier AWB tracking number to this order"
+                >
+                  <span>📦</span> {selectedOrder.shipment_details?.zipypost_awb ? 'Edit AWB' : 'Attach ZipyPost AWB'}
+                </button>
               )}
               {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && (
                 <button
