@@ -56,26 +56,7 @@ export default function DashboardView({
 }) {
   const [storeMetricModalType, setStoreMetricModalType] = useState(null);
 
-  if (activeTab !== 'dashboard') return null;
-
   const isDateFiltered = Boolean(dashboardDateFilter && dashboardDateFilter !== 'all');
-
-  // --- Dynamic Razorpay & Payout Calculations ---
-  const nonCancelledOrders = (orders || []).filter(o => o.status !== 'Cancelled');
-
-  const prepaidOrders = nonCancelledOrders.filter(o => {
-    const pm = String(o.payment_method || '').toLowerCase();
-    return pm.includes('razorpay') || pm.includes('payment id') || pm.includes('prepaid');
-  });
-
-  const rzpDeliveredOrders = prepaidOrders.filter(o => o.status === 'Delivered');
-  const rzpPendingOrders = prepaidOrders.filter(o => o.status !== 'Delivered');
-
-  const localRzpSettledSum = rzpDeliveredOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
-  const localRzpPendingSum = rzpPendingOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
-  const localRzpTotalSum = prepaidOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
-
-  const isRzpApiConnected = Boolean(financialSummary?.razorpay?.connected);
 
   // Filter schedules inside financialSummary when a date filter is selected
   const filteredFinancialSummary = useMemo(() => {
@@ -109,6 +90,25 @@ export default function DashboardView({
       } : financialSummary.courier_combined
     };
   }, [financialSummary, isDateFiltered, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd]);
+
+  if (activeTab !== 'dashboard') return null;
+
+  // --- Dynamic Razorpay & Payout Calculations ---
+  const nonCancelledOrders = (orders || []).filter(o => o.status !== 'Cancelled');
+
+  const prepaidOrders = nonCancelledOrders.filter(o => {
+    const pm = String(o.payment_method || '').toLowerCase();
+    return pm.includes('razorpay') || pm.includes('payment id') || pm.includes('prepaid');
+  });
+
+  const rzpDeliveredOrders = prepaidOrders.filter(o => o.status === 'Delivered');
+  const rzpPendingOrders = prepaidOrders.filter(o => o.status !== 'Delivered');
+
+  const localRzpSettledSum = rzpDeliveredOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+  const localRzpPendingSum = rzpPendingOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+  const localRzpTotalSum = prepaidOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
+
+  const isRzpApiConnected = Boolean(financialSummary?.razorpay?.connected);
 
   const rzpSettledFilteredSum = (filteredFinancialSummary?.razorpay?.settlements_schedule || []).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
   const rzpPendingFilteredSum = (filteredFinancialSummary?.razorpay?.pending_schedule || []).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
