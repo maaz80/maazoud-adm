@@ -227,3 +227,52 @@ export const isOrderInDateRange = (order, filterType, customStart, customEnd) =>
   return true;
 };
 
+export const getCourierTrackingUrl = (courierName = '', awb = '') => {
+  if (!awb) return 'https://track.zipypost.com';
+  const c = String(courierName || '').toLowerCase().trim();
+  const cleanAwb = String(awb).trim();
+
+  // Amazon Shipping
+  if (c.includes('amazon') || (/^\d{12}$/.test(cleanAwb) && cleanAwb.startsWith('37'))) {
+    return `https://track.amazon.in/tracking/${cleanAwb}`;
+  }
+
+  // Delhivery
+  if (c.includes('delhivery') || (/^\d{12,15}$/.test(cleanAwb) && cleanAwb.startsWith('109'))) {
+    return `https://www.delhivery.com/track/package/${cleanAwb}`;
+  }
+
+  // Ekart Logistics
+  if (c.includes('ekart') || cleanAwb.toUpperCase().startsWith('SRSC') || cleanAwb.toUpperCase().startsWith('SRSP')) {
+    return `https://ekartlogistics.com/shipmenttrack/${cleanAwb}`;
+  }
+
+  // Shadowfax
+  if (c.includes('shadowfax') || cleanAwb.toUpperCase().startsWith('SF')) {
+    return `https://tracker.shadowfax.in/#/track/${cleanAwb}`;
+  }
+
+  // Xpressbees
+  if (c.includes('xpressbee')) {
+    return `https://www.xpressbees.com/track?awb=${cleanAwb}`;
+  }
+
+  // Blue Dart
+  if (c.includes('bluedart') || c.includes('blue dart')) {
+    return `https://www.bluedart.com/tracking?handler=trak&action=custtrack&track_for=0&track_type=1&numbers=${cleanAwb}`;
+  }
+
+  // DTDC
+  if (c.includes('dtdc')) {
+    return `https://www.dtdc.in/`;
+  }
+
+  // Shiprocket
+  if (c.includes('shiprocket')) {
+    return `https://shiprocket.co/tracking/${cleanAwb}`;
+  }
+
+  // Default ZipyPost portal
+  return `https://track.zipypost.com`;
+};
+

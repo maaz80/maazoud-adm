@@ -1,6 +1,6 @@
 import React from 'react';
 import { FiCheckCircle } from 'react-icons/fi';
-import { getWhatsAppLink } from '../../utils/helpers';
+import { getWhatsAppLink, getCourierTrackingUrl } from '../../utils/helpers';
 import { supabase } from '../../utils/supabase';
 
 export default function OrderDetailsModal({
@@ -479,15 +479,27 @@ export default function OrderDetailsModal({
                       </span>
                     </div>
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Live Status API</span>
-                      <a 
-                        href={`https://api.zipypost.com/track/${zipyAwb}`} 
-                        target="_blank" 
-                        rel="noreferrer" 
-                        className="text-sky-600 font-bold hover:underline block"
-                      >
-                        View Tracking Status &rarr;
-                      </a>
+                      <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Track Online</span>
+                      <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                        <a 
+                          href={getCourierTrackingUrl(zipyCourier, zipyAwb)} 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="text-sky-700 font-bold hover:underline inline-flex items-center gap-1"
+                        >
+                          Track on {zipyCourier || 'Courier'} &rarr;
+                        </a>
+                        <span className="text-stone-300">|</span>
+                        <a 
+                          href="https://track.zipypost.com" 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="text-stone-500 hover:text-stone-800 text-[10px] underline"
+                          title="Open ZipyPost Tracking Portal"
+                        >
+                          ZipyPost Portal
+                        </a>
+                      </div>
                     </div>
                   </div>
                   <div className="flex gap-2 pt-2 border-t border-sky-100 mt-2 flex-wrap">

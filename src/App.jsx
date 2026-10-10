@@ -1142,7 +1142,8 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to initialize ZipyPost shipment.');
 
-      alert(`ZipyPost Shipment Booked Successfully!\nAWB: ${data.awb_number}\nCourier: ${data.courier_name}\nCharge: Rs. ${data.rate}`);
+      const bookedAwb = data.awb_number || data.awb;
+      alert(`ZipyPost Shipment Booked Successfully!\nAWB: ${bookedAwb || 'Assigned'}\nCourier: ${data.courier_name}\nCharge: Rs. ${data.rate}`);
       setShowZipyPostModal(false);
       await fetchOrders();
 
@@ -1150,7 +1151,7 @@ export default function App() {
         const updatedDetails = {
           ...(selectedOrder.shipment_details || {}),
           carrier: 'zipypost',
-          zipypost_awb: data.awb_number,
+          zipypost_awb: bookedAwb,
           zipypost_courier_name: data.courier_name,
           zipypost_charge: data.rate,
           zipypost_status: 'AWB Assigned'
@@ -1175,7 +1176,11 @@ export default function App() {
     setGeneratingZipyLabel(true);
 
     try {
-      const awb = order.shipment_details?.zipypost_awb || order.zipypost_awb || order.shiprocket_awb;
+      const awb = order.shipment_details?.zipypost_awb || 
+                  order.shipment_details?.zipypost_response?.RESULT?.awb ||
+                  order.shipment_details?.zipypost_response?.result?.awb ||
+                  order.zipypost_awb || 
+                  order.shiprocket_awb;
       if (!awb) {
         alert("No ZipyPost AWB found for this order.");
         return;
