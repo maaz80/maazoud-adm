@@ -94,9 +94,7 @@ export default function DashboardView({
     };
   }, [financialSummary, isDateFiltered, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd]);
 
-  if (activeTab !== 'dashboard') return null;
-
-  // --- Dynamic Ads Campaign Stats ---
+  // --- Dynamic Ads Campaign Stats (Hook must be declared before any early return) ---
   const adCampaignsStats = useMemo(() => {
     let totalSpend = 0;
     let totalRevenue = 0;
@@ -130,6 +128,8 @@ export default function DashboardView({
       roas
     };
   }, [adCampaigns, orders, products]);
+
+  if (activeTab !== 'dashboard') return null;
 
   // --- Dynamic Razorpay & Payout Calculations ---
   const nonCancelledOrders = (orders || []).filter(o => o.status !== 'Cancelled');
