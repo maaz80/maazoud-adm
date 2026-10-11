@@ -532,8 +532,8 @@ export default function DashboardView({
           </div>
         </div>
 
-        {/* ROW 2: 8 SALES & PROFIT CHANNEL BOXES (OFFLINE, TOTAL COD, ONLINE, ADS, PROFIT AFTER ADS) */}
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-4">
+        {/* ROW 2: 6 SALES & PROFIT CHANNEL BOXES (OFFLINE, TOTAL COD, ONLINE) */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           
           {/* Box 1: Offline Sales */}
           <div
@@ -649,6 +649,11 @@ export default function DashboardView({
             </div>
           </div>
 
+        </div>
+
+        {/* ROW 3: ADS & NET PROFIT CHANNEL (SPACIOUS 2-COLUMN ROW) */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+
           {/* Box 7: Ads (Marketing Spend & Real Profit) */}
           <div
             onClick={() => setShowAdsModal && setShowAdsModal(true)}
@@ -705,7 +710,7 @@ export default function DashboardView({
 
         </div>
 
-        {/* ROW 3: 4 LIVE BANK SETTLEMENTS & COURIER PAYOUT METRICS */}
+        {/* ROW 4: 4 LIVE BANK SETTLEMENTS & COURIER PAYOUT METRICS */}
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
           {/* Box 7: Razorpay se kitna paisa bank me aa chuka */}
