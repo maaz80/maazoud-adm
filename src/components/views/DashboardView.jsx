@@ -532,8 +532,8 @@ export default function DashboardView({
           </div>
         </div>
 
-        {/* ROW 2: 7 SALES & PROFIT CHANNEL BOXES (OFFLINE, TOTAL COD, ONLINE, ADS) */}
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
+        {/* ROW 2: 8 SALES & PROFIT CHANNEL BOXES (OFFLINE, TOTAL COD, ONLINE, ADS, PROFIT AFTER ADS) */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-4">
           
           {/* Box 1: Offline Sales */}
           <div
@@ -672,6 +672,33 @@ export default function DashboardView({
               </div>
               <p className="text-[9px] text-[#8c6239] font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
                 {adCampaignsStats.ordersCount} Orders &bull; {adCampaignsStats.roas.toFixed(1)}x ROAS &rarr;
+              </p>
+            </div>
+          </div>
+
+          {/* Box 8: Total Profit After Minus Total Ads Amount */}
+          <div
+            onClick={() => setShowProfitListModal && setShowProfitListModal(true)}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-emerald-600 transition-all hover:bg-stone-50/80 group"
+            title="Total Profit minus Total Ads Amount"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-emerald-800 tracking-wider">Profit (After Ads)</span>
+              <FiTrendingUp className="text-emerald-600" size={18} />
+            </div>
+            <div>
+              <div className="flex items-baseline justify-between">
+                <h3 className={`text-xl font-bold ${
+                  (calculatedProfitTotal - adCampaignsStats.totalSpend) >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                }`}>
+                  ₹ {formatApprox(calculatedProfitTotal - adCampaignsStats.totalSpend)}
+                </h3>
+                <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 uppercase">
+                  Net In Hand
+                </span>
+              </div>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                Profit - ₹{formatApprox(adCampaignsStats.totalSpend)} Ads &rarr;
               </p>
             </div>
           </div>
