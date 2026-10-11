@@ -46,8 +46,6 @@ export default function AdsManagerModal({
   const [orderDateFilter, setOrderDateFilter] = useState('all'); // 'all', 'today', 'yesterday', 'last7'
   const [expandedCampaignId, setExpandedCampaignId] = useState(null);
 
-  if (!showAdsModal) return null;
-
   // Filter out Cancelled orders for attribution
   const validOrders = useMemo(() => {
     return (orders || []).filter(o => o.status !== 'Cancelled');
@@ -213,6 +211,8 @@ export default function AdsManagerModal({
       overallRoas
     };
   }, [adCampaigns, orderMap, products]);
+
+  if (!showAdsModal) return null;
 
   // Handle Form Submission
   const handleSubmitCampaign = (e) => {

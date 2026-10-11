@@ -2377,15 +2377,17 @@ export default function App() {
         handleCreateManualOrder={handleCreateManualOrder}
       />
 
-      <AdsManagerModal
-        showAdsModal={showAdsModal}
-        setShowAdsModal={setShowAdsModal}
-        adCampaigns={adCampaigns}
-        saveAdCampaign={saveAdCampaign}
-        deleteAdCampaign={deleteAdCampaign}
-        orders={orders}
-        products={products}
-      />
+      {showAdsModal && (
+        <AdsManagerModal
+          showAdsModal={showAdsModal}
+          setShowAdsModal={setShowAdsModal}
+          adCampaigns={adCampaigns}
+          saveAdCampaign={saveAdCampaign}
+          deleteAdCampaign={deleteAdCampaign}
+          orders={orders}
+          products={products}
+        />
+      )}
     </div>
   );
 }
