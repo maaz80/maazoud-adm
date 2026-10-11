@@ -7,6 +7,7 @@ export default function Header({ activeTab, user, mobileMenuOpen, setMobileMenuO
     categories: 'Categories Management',
     products: 'Product Operations',
     orders: 'Recent Orders',
+    leads: 'Abandoned Checkout Leads',
     banners: 'Promotion Banners',
     blogs: 'Blog Management',
     testimonials: 'Testimonials'

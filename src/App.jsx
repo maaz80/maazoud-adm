@@ -26,6 +26,7 @@ import DashboardView from './components/views/DashboardView';
 import CategoriesView from './components/views/CategoriesView';
 import ProductsView from './components/views/ProductsView';
 import OrdersView from './components/views/OrdersView';
+import LeadsView from './components/views/LeadsView';
 import BannersView from './components/views/BannersView';
 import BlogsView from './components/views/BlogsView';
 import TestimonialsView from './components/views/TestimonialsView';
@@ -38,6 +39,7 @@ import ProfitListModal from './components/modals/ProfitListModal';
 import DeliveredListModal from './components/modals/DeliveredListModal';
 import FinancialModal from './components/modals/FinancialModal';
 import ManualOrderModal from './components/modals/ManualOrderModal';
+import AdsManagerModal from './components/modals/AdsManagerModal';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -56,6 +58,18 @@ export default function App() {
   const [banners, setBanners] = useState([]);
   const [blogs, setBlogs] = useState([]);
   const [testimonials, setTestimonials] = useState([]);
+  const [leads, setLeads] = useState([]);
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [leadsTableMissing, setLeadsTableMissing] = useState(false);
+  const [showAdsModal, setShowAdsModal] = useState(false);
+  const [adCampaigns, setAdCampaigns] = useState(() => {
+    try {
+      const cached = localStorage.getItem('maazoud_ad_campaigns');
+      return cached ? JSON.parse(cached) : [];
+    } catch (e) {
+      return [];
+    }
+  });
   const [dbLoading, setDbLoading] = useState(false);
 
   // Financial summary & modal states
@@ -307,7 +321,9 @@ export default function App() {
         fetchBanners(),
         fetchBlogs(),
         fetchTestimonials(),
-        fetchFinancialSummary()
+        fetchFinancialSummary(),
+        fetchLeads(),
+        fetchAdCampaigns()
       ]);
     } catch (err) {
       console.error("Failed to load initial database content:", err);
@@ -469,6 +485,224 @@ export default function App() {
   const fetchTestimonials = async () => {
     const { data } = await supabase.from('testimonials').select('*').order('created_at', { ascending: false });
     if (data) setTestimonials(data);
+  };
+
+  const processAndSetLeads = (rawLeads) => {
+    // Cross-check against completed phone numbers from orders so completed purchasers never show as abandoned leads
+    const completedPhones = new Set(
+      orders
+        .map(o => (o.phone || '').replace(/\D/g, ''))
+        .filter(p => p.length >= 10)
+        .map(p => p.slice(-10))
+    );
+
+    const updated = (rawLeads || []).map(lead => {
+      const cleanPhone = (lead.phone || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone && completedPhones.has(cleanPhone) && lead.status !== 'converted') {
+        return { ...lead, status: 'converted' };
+      }
+      return lead;
+    });
+
+    setLeads(updated);
+  };
+
+  const fetchLeads = async () => {
+    setLeadsLoading(true);
+    try {
+      // 1. Try directly from Supabase
+      const { data, error } = await supabase
+        .from('abandoned_leads')
+        .select('*')
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        if (error.code === 'PGRST205' || error.message?.includes('does not exist')) {
+          setLeadsTableMissing(true);
+        }
+        // Try fallback via API_BASE
+        try {
+          const res = await fetch(`${API_BASE}/api/leads`);
+          const json = await res.json();
+          if (json.tableMissing) {
+            setLeadsTableMissing(true);
+          } else if (json.success && Array.isArray(json.leads)) {
+            setLeadsTableMissing(false);
+            processAndSetLeads(json.leads);
+            return;
+          }
+        } catch (apiErr) {
+          console.warn('API leads fallback error:', apiErr);
+        }
+      } else if (data) {
+        setLeadsTableMissing(false);
+        processAndSetLeads(data);
+      }
+    } catch (e) {
+      console.warn('Error fetching leads:', e);
+    } finally {
+      setLeadsLoading(false);
+    }
+  };
+
+  const updateLeadStatus = async (leadId, newStatus) => {
+    try {
+      const { error } = await supabase
+        .from('abandoned_leads')
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .eq('id', leadId);
+
+      if (!error) {
+        setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
+      } else {
+        await fetch(`${API_BASE}/api/leads`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update_status', lead_id: leadId, status: newStatus })
+        });
+        setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
+      }
+    } catch (e) {
+      console.error('Failed to update lead status:', e);
+    }
+  };
+
+  const deleteLead = async (leadId) => {
+    try {
+      const { error } = await supabase
+        .from('abandoned_leads')
+        .delete()
+        .eq('id', leadId);
+
+      if (!error) {
+        setLeads(prev => prev.filter(l => l.id !== leadId));
+      } else {
+        await fetch(`${API_BASE}/api/leads`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete', lead_id: leadId })
+        });
+        setLeads(prev => prev.filter(l => l.id !== leadId));
+      }
+    } catch (e) {
+      console.error('Failed to delete lead:', e);
+    }
+  };
+
+  const fetchAdCampaigns = async () => {
+    try {
+      // 1. Try directly from Supabase
+      const { data, error } = await supabase
+        .from('ad_campaigns')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && Array.isArray(data)) {
+        setAdCampaigns(data);
+        localStorage.setItem('maazoud_ad_campaigns', JSON.stringify(data));
+        return;
+      }
+
+      // 2. Fallback via Next.js API
+      try {
+        const res = await fetch(`${API_BASE}/api/ads`);
+        const json = await res.json();
+        if (json.success && Array.isArray(json.campaigns)) {
+          setAdCampaigns(json.campaigns);
+          localStorage.setItem('maazoud_ad_campaigns', JSON.stringify(json.campaigns));
+        }
+      } catch (apiErr) {}
+    } catch (e) {
+      console.warn('Error fetching ad campaigns:', e);
+    }
+  };
+
+  const saveAdCampaign = async (campaignData) => {
+    try {
+      const isNew = !campaignData.id;
+      const campaignId = campaignData.id || `ad_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const newCampaign = {
+        ...campaignData,
+        id: campaignId,
+        created_at: campaignData.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      // Optimistic local update
+      setAdCampaigns(prev => {
+        const exists = prev.some(c => c.id === campaignId);
+        const updated = exists
+          ? prev.map(c => c.id === campaignId ? newCampaign : c)
+          : [newCampaign, ...prev];
+        localStorage.setItem('maazoud_ad_campaigns', JSON.stringify(updated));
+        return updated;
+      });
+
+      // Persist to Supabase if table exists
+      try {
+        if (isNew) {
+          const { error } = await supabase.from('ad_campaigns').insert([{
+            ad_name: newCampaign.ad_name,
+            platform: newCampaign.platform,
+            spend: newCampaign.spend,
+            ad_date: newCampaign.ad_date,
+            order_ids: newCampaign.order_ids,
+            notes: newCampaign.notes
+          }]);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('ad_campaigns').update({
+            ad_name: newCampaign.ad_name,
+            platform: newCampaign.platform,
+            spend: newCampaign.spend,
+            ad_date: newCampaign.ad_date,
+            order_ids: newCampaign.order_ids,
+            notes: newCampaign.notes,
+            updated_at: new Date().toISOString()
+          }).eq('id', campaignId);
+          if (error) throw error;
+        }
+      } catch (dbErr) {
+        // Fallback to API route
+        try {
+          await fetch(`${API_BASE}/api/ads`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save', campaign: newCampaign })
+          });
+        } catch (apiErr) {}
+      }
+    } catch (e) {
+      console.error('Failed to save ad campaign:', e);
+    }
+  };
+
+  const deleteAdCampaign = async (campaignId) => {
+    try {
+      // Optimistic local update
+      setAdCampaigns(prev => {
+        const filtered = prev.filter(c => c.id !== campaignId);
+        localStorage.setItem('maazoud_ad_campaigns', JSON.stringify(filtered));
+        return filtered;
+      });
+
+      // Delete from Supabase
+      try {
+        const { error } = await supabase.from('ad_campaigns').delete().eq('id', campaignId);
+        if (error) throw error;
+      } catch (dbErr) {
+        // Fallback to API route
+        try {
+          await fetch(`${API_BASE}/api/ads`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', id: campaignId })
+          });
+        } catch (apiErr) {}
+      }
+    } catch (e) {
+      console.error('Failed to delete ad campaign:', e);
+    }
   };
 
   // Storage Upload Helper
@@ -1781,6 +2015,7 @@ export default function App() {
         handleLogout={handleLogout}
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
+        leadsCount={leads.filter(l => l.status === 'pending').length}
       />
 
       {/* Main Content Area */}
@@ -1839,6 +2074,8 @@ export default function App() {
                 setDashboardCustomStart={setDashboardCustomStart}
                 dashboardCustomEnd={dashboardCustomEnd}
                 setDashboardCustomEnd={setDashboardCustomEnd}
+                setShowAdsModal={setShowAdsModal}
+                adCampaigns={adCampaigns}
               />
             )}
 
@@ -1901,6 +2138,18 @@ export default function App() {
                 setSelectedOrder={setSelectedOrder}
                 sentMessages={sentMessages}
                 requestOrderStatusUpdate={requestOrderStatusUpdate}
+              />
+            )}
+
+            {activeTab === 'leads' && (
+              <LeadsView
+                activeTab={activeTab}
+                leads={leads}
+                leadsLoading={leadsLoading}
+                fetchLeads={fetchLeads}
+                updateLeadStatus={updateLeadStatus}
+                deleteLead={deleteLead}
+                tableMissing={leadsTableMissing}
               />
             )}
 
@@ -2126,6 +2375,16 @@ export default function App() {
         savingManualOrder={savingManualOrder}
         products={products}
         handleCreateManualOrder={handleCreateManualOrder}
+      />
+
+      <AdsManagerModal
+        showAdsModal={showAdsModal}
+        setShowAdsModal={setShowAdsModal}
+        adCampaigns={adCampaigns}
+        saveAdCampaign={saveAdCampaign}
+        deleteAdCampaign={deleteAdCampaign}
+        orders={orders}
+        products={products}
       />
     </div>
   );

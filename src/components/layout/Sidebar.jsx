@@ -8,15 +8,17 @@ import {
   FiList,
   FiImage,
   FiStar,
+  FiUsers,
   FiX
 } from 'react-icons/fi';
 
-export default function Sidebar({ activeTab, setActiveTab, user, handleLogout, mobileMenuOpen, setMobileMenuOpen }) {
+export default function Sidebar({ activeTab, setActiveTab, user, handleLogout, mobileMenuOpen, setMobileMenuOpen, leadsCount = 0 }) {
   const navItems = [
     { id: 'dashboard', name: 'Dashboard', icon: <FiGrid size={18} /> },
     { id: 'categories', name: 'Categories', icon: <FiFolder size={18} /> },
     { id: 'products', name: 'Products Catalog', icon: <FiShoppingBag size={18} /> },
     { id: 'orders', name: 'Orders Listing', icon: <FiPackage size={18} /> },
+    { id: 'leads', name: 'Abandoned Leads', icon: <FiUsers size={18} />, badge: leadsCount },
     { id: 'banners', name: 'Promotion Banners', icon: <FiImage size={18} /> },
     { id: 'blogs', name: 'Manage Blogs', icon: <FiList size={18} /> },
     { id: 'testimonials', name: 'Testimonials', icon: <FiStar size={18} /> },
@@ -50,14 +52,23 @@ export default function Sidebar({ activeTab, setActiveTab, user, handleLogout, m
             <button
               key={item.id}
               onClick={() => handleTabClick(item.id)}
-              className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-md text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer ${
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-md text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer ${
                 activeTab === item.id
                   ? "bg-[#8c6239] text-white"
                   : "text-stone-400 hover:bg-stone-900 hover:text-white"
               }`}
             >
-              {item.icon}
-              {item.name}
+              <div className="flex items-center gap-3.5">
+                {item.icon}
+                <span>{item.name}</span>
+              </div>
+              {item.badge > 0 && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                  activeTab === item.id ? "bg-white text-[#8c6239]" : "bg-[#8c6239] text-white"
+                }`}>
+                  {item.badge}
+                </span>
+              )}
             </button>
           ))}
         </nav>

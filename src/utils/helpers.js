@@ -34,6 +34,20 @@ export const getWhatsAppLink = (order) => {
   return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
 };
 
+export const getLeadWhatsAppLink = (lead) => {
+  if (!lead) return "#";
+  const name = lead.customer_name ? lead.customer_name.trim() : "";
+  const greeting = name ? `Hello ${name} brother` : "Hello brother";
+
+  const text = `${greeting}, maine dekha aap Maaz Oud pe attar checkout kar rahe the par aapne order nahi kiya. Kya hua brother, koi issue laga kya?`;
+
+  let phone = (lead.phone || '').replace(/[^0-9]/g, '');
+  if (phone.length === 10) {
+    phone = '91' + phone;
+  }
+  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+};
+
 export const isComboProduct = (product) => String(product?.description || '').includes(COMBO_PRODUCT_MARKER);
 
 export const cleanProductDescription = (description = '') => {

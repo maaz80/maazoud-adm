@@ -13,7 +13,8 @@ import {
   FiLayers,
   FiShoppingBag,
   FiXCircle,
-  FiCalendar
+  FiCalendar,
+  FiTarget
 } from 'react-icons/fi';
 import { calculateOrderProfit, isOrderInDateRange } from '../../utils/helpers';
 import StoreMetricsModal from '../modals/StoreMetricsModal';
@@ -52,7 +53,9 @@ export default function DashboardView({
   dashboardCustomStart = '',
   setDashboardCustomStart,
   dashboardCustomEnd = '',
-  setDashboardCustomEnd
+  setDashboardCustomEnd,
+  setShowAdsModal,
+  adCampaigns = []
 }) {
   const [storeMetricModalType, setStoreMetricModalType] = useState(null);
 
@@ -92,6 +95,41 @@ export default function DashboardView({
   }, [financialSummary, isDateFiltered, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd]);
 
   if (activeTab !== 'dashboard') return null;
+
+  // --- Dynamic Ads Campaign Stats ---
+  const adCampaignsStats = useMemo(() => {
+    let totalSpend = 0;
+    let totalRevenue = 0;
+    let totalProfit = 0;
+    let uniqueOrders = new Set();
+
+    (adCampaigns || []).forEach(c => {
+      const spend = Number(c.spend) || 0;
+      totalSpend += spend;
+      let orderProfitSum = 0;
+
+      (c.order_ids || []).forEach(orderId => {
+        uniqueOrders.add(orderId);
+        const order = (orders || []).find(o => o.id === orderId);
+        if (order) {
+          const p = calculateOrderProfit(order, products);
+          totalRevenue += p.sellingPrice || 0;
+          orderProfitSum += p.profit || 0;
+        }
+      });
+
+      totalProfit += (orderProfitSum - spend);
+    });
+
+    const roas = totalSpend > 0 ? (totalRevenue / totalSpend) : 0;
+    return {
+      totalSpend,
+      totalRevenue,
+      totalProfit,
+      ordersCount: uniqueOrders.size,
+      roas
+    };
+  }, [adCampaigns, orders, products]);
 
   // --- Dynamic Razorpay & Payout Calculations ---
   const nonCancelledOrders = (orders || []).filter(o => o.status !== 'Cancelled');
@@ -494,8 +532,8 @@ export default function DashboardView({
           </div>
         </div>
 
-        {/* ROW 2: 6 SALES & PROFIT CHANNEL BOXES (OFFLINE, TOTAL COD, ONLINE) */}
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        {/* ROW 2: 7 SALES & PROFIT CHANNEL BOXES (OFFLINE, TOTAL COD, ONLINE, ADS) */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
           
           {/* Box 1: Offline Sales */}
           <div
@@ -607,6 +645,33 @@ export default function DashboardView({
               </h3>
               <p className="text-[9px] text-blue-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
                 Razorpay Net Margin &rarr;
+              </p>
+            </div>
+          </div>
+
+          {/* Box 7: Ads (Marketing Spend & Real Profit) */}
+          <div
+            onClick={() => setShowAdsModal && setShowAdsModal(true)}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-[#8c6239] transition-all hover:bg-stone-50/80 group"
+            title="Click to view and manage Ads campaigns, spend & exact Profit/Loss"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-amber-800 tracking-wider">Ads & ROI</span>
+              <FiTarget className="text-[#8c6239]" size={18} />
+            </div>
+            <div>
+              <div className="flex items-baseline justify-between">
+                <h3 className="text-xl font-bold text-stone-900">
+                  ₹ {formatApprox(adCampaignsStats.totalSpend)}
+                </h3>
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                  adCampaignsStats.totalProfit >= 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-rose-50 text-rose-700 border-rose-200'
+                }`}>
+                  {adCampaignsStats.totalProfit >= 0 ? '+' : ''}₹{formatApprox(adCampaignsStats.totalProfit)}
+                </span>
+              </div>
+              <p className="text-[9px] text-[#8c6239] font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
+                {adCampaignsStats.ordersCount} Orders &bull; {adCampaignsStats.roas.toFixed(1)}x ROAS &rarr;
               </p>
             </div>
           </div>
