@@ -2231,6 +2231,8 @@ export default function App() {
       <OrderDetailsModal
         selectedOrder={selectedOrder}
         setSelectedOrder={setSelectedOrder}
+        products={products}
+        fetchProducts={fetchProducts}
         getOrderDeliveryDate={getOrderDeliveryDate}
         handleUpdateDeliveryDate={handleUpdateDeliveryDate}
         markMessageAsSent={markMessageAsSent}

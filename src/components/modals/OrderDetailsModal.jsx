@@ -1,11 +1,23 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FiCheckCircle } from 'react-icons/fi';
 import { getWhatsAppLink, getCourierTrackingUrl } from '../../utils/helpers';
 import { supabase } from '../../utils/supabase';
 
+const isVariantAvailable = (product, size) => {
+  if (!product) return false;
+  const is6ml = size === '6ml';
+  const price = Number(is6ml ? product.price6mloffer : product.price3mloffer) || 0;
+  const stock = is6ml ? product.stock_6ml : product.stock_3ml;
+  const isOutOfStock = is6ml ? product.is_out_of_stock_6ml : product.is_out_of_stock_3ml;
+  const inStock = is6ml ? product.in_stock_6ml : product.in_stock_3ml;
+  return price > 0 && !product.is_out_of_stock && product.in_stock !== false && !isOutOfStock && inStock !== false && (stock == null || Number(stock) > 0);
+};
+
 export default function OrderDetailsModal({
   selectedOrder,
   setSelectedOrder,
+  products = [],
+  fetchProducts,
   getOrderDeliveryDate,
   handleUpdateDeliveryDate,
   markMessageAsSent,
@@ -48,7 +60,101 @@ export default function OrderDetailsModal({
   generatingZipyLabel,
   syncingZipyShipment
 }) {
+  const [isEditingAddress, setIsEditingAddress] = useState(false);
+  const [addressDraft, setAddressDraft] = useState({ address: '', city: '', state: '', pincode: '' });
+  const [savingAddress, setSavingAddress] = useState(false);
+  const [productToAdd, setProductToAdd] = useState('');
+  const [sizeToAdd, setSizeToAdd] = useState('3ml');
+  const [quantityToAdd, setQuantityToAdd] = useState(1);
+  const [addingProduct, setAddingProduct] = useState(false);
+
   if (!selectedOrder) return null;
+
+  const isCodOrder = /cod|cash on delivery/i.test(String(selectedOrder.payment_method || ''));
+  const canAddProducts = isCodOrder
+    && !selectedOrder.is_paid
+    && ['Placed', 'Processing'].includes(selectedOrder.status)
+    && !selectedOrder.shiprocket_awb
+    && !selectedOrder.shiprocket_order_id
+    && !selectedOrder.shiprocket_shipment_id
+    && !selectedOrder.shipment_details?.zipypost_awb;
+  const addableProducts = products.filter(product => isVariantAvailable(product, '3ml') || isVariantAvailable(product, '6ml'));
+  const selectedProduct = addableProducts.find(product => String(product.id) === String(productToAdd));
+  const selectedSizeStock = sizeToAdd === '6ml' ? selectedProduct?.stock_6ml : selectedProduct?.stock_3ml;
+  const selectedVariantAvailable = isVariantAvailable(selectedProduct, sizeToAdd);
+
+  const saveShippingAddress = async () => {
+    if (!addressDraft.address.trim() || !addressDraft.city.trim() || !addressDraft.state.trim() || !addressDraft.pincode.trim()) {
+      alert('Please complete all address fields.');
+      return;
+    }
+    setSavingAddress(true);
+    const updatedAddress = {
+      address: addressDraft.address.trim(),
+      city: addressDraft.city.trim(),
+      state: addressDraft.state.trim(),
+      pincode: addressDraft.pincode.trim()
+    };
+    const { error } = await supabase.from('orders').update(updatedAddress).eq('id', selectedOrder.id);
+    setSavingAddress(false);
+    if (error) {
+      alert('Failed to update address: ' + error.message);
+      return;
+    }
+    setSelectedOrder(prev => ({ ...prev, ...updatedAddress }));
+    await fetchOrders();
+    setIsEditingAddress(false);
+    alert('Shipping address updated. If a courier shipment already exists, update its address separately with the courier.');
+  };
+
+  const handleAddProduct = async () => {
+    if (!canAddProducts) {
+      alert('Products can only be added to unpaid COD orders before shipment.');
+      return;
+    }
+    if (!selectedProduct) {
+      alert('Please select an available product.');
+      return;
+    }
+    const quantity = Math.floor(Number(quantityToAdd));
+    if (!Number.isFinite(quantity) || quantity < 1) {
+      alert('Enter a valid quantity.');
+      return;
+    }
+    if (selectedSizeStock != null && quantity > Number(selectedSizeStock)) {
+      alert(`Only ${selectedSizeStock} piece(s) are available for ${sizeToAdd}.`);
+      return;
+    }
+
+    const price = Number(sizeToAdd === '6ml' ? selectedProduct.price6mloffer : selectedProduct.price3mloffer) || 0;
+    const productItem = {
+      cartItemId: `admin-${selectedProduct.id}-${sizeToAdd}-${Date.now()}`,
+      product: { id: selectedProduct.id, name: selectedProduct.name, image: selectedProduct.image || '' },
+      quantity,
+      selectedSize: sizeToAdd,
+      price
+    };
+    const currentItems = Array.isArray(selectedOrder.items) ? selectedOrder.items : [];
+    const updatedItems = [...currentItems, productItem];
+    const subtotal = updatedItems.reduce((sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 1), 0);
+    const codFee = isCodOrder ? 30 : 0;
+    const updatedOrder = { items: updatedItems, total_amount: Math.round(subtotal + 40 + codFee) };
+
+    if (!confirm(`Add ${quantity} × ${selectedProduct.name} (${sizeToAdd}) and update COD total to Rs. ${updatedOrder.total_amount}?`)) return;
+    setAddingProduct(true);
+    const { error } = await supabase.from('orders').update(updatedOrder).eq('id', selectedOrder.id);
+    setAddingProduct(false);
+    if (error) {
+      alert('Could not add product: ' + error.message);
+      return;
+    }
+    setSelectedOrder(prev => ({ ...prev, ...updatedOrder }));
+    await fetchOrders();
+    await fetchProducts?.();
+    setProductToAdd('');
+    setQuantityToAdd(1);
+    alert('Product added and COD total updated.');
+  };
 
   return (
     <>
@@ -167,7 +273,23 @@ export default function OrderDetailsModal({
                 <div className="md:col-span-2">
                   <div className="flex justify-between items-center mb-1">
                     <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">Shipping Address</span>
+                    {!isEditingAddress && <button
+                      type="button"
+                      onClick={() => {
+                        setAddressDraft({
+                          address: selectedOrder.address || '',
+                          city: selectedOrder.city || '',
+                          state: selectedOrder.state || '',
+                          pincode: selectedOrder.pincode || ''
+                        });
+                        setIsEditingAddress(true);
+                      }}
+                      className="text-[9px] uppercase font-bold text-blue-700 hover:underline cursor-pointer mr-auto ml-3"
+                    >
+                      Edit Address
+                    </button>}
                     <button
+                      type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(`${selectedOrder.customer_name}\n${selectedOrder.phone}\n${selectedOrder.address}\n${selectedOrder.city}, ${selectedOrder.state} - ${selectedOrder.pincode}`);
                         alert("Shipping details copied to clipboard!");
@@ -177,10 +299,23 @@ export default function OrderDetailsModal({
                       Copy Address Details
                     </button>
                   </div>
-                  <span className="text-stone-850 font-light block leading-relaxed bg-white border border-stone-150 p-2.5 rounded">
-                    {selectedOrder.address}<br />
-                    {selectedOrder.city}, {selectedOrder.state} - {selectedOrder.pincode}
-                  </span>
+                  {isEditingAddress ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-white border border-stone-200 p-3 rounded">
+                      <textarea aria-label="Street address" rows={2} value={addressDraft.address} onChange={event => setAddressDraft(prev => ({ ...prev, address: event.target.value }))} placeholder="Full address" className="sm:col-span-2 w-full border border-stone-200 rounded p-2" />
+                      <input aria-label="City" value={addressDraft.city} onChange={event => setAddressDraft(prev => ({ ...prev, city: event.target.value }))} placeholder="City" className="w-full border border-stone-200 rounded p-2" />
+                      <input aria-label="State" value={addressDraft.state} onChange={event => setAddressDraft(prev => ({ ...prev, state: event.target.value }))} placeholder="State" className="w-full border border-stone-200 rounded p-2" />
+                      <input aria-label="Pincode" value={addressDraft.pincode} onChange={event => setAddressDraft(prev => ({ ...prev, pincode: event.target.value }))} placeholder="Pincode" className="w-full border border-stone-200 rounded p-2" />
+                      <div className="sm:col-span-2 flex justify-end gap-2">
+                        <button type="button" onClick={() => setIsEditingAddress(false)} className="px-3 py-1.5 rounded border border-stone-300">Cancel</button>
+                        <button type="button" disabled={savingAddress} onClick={saveShippingAddress} className="px-3 py-1.5 rounded bg-[#8c6239] text-white disabled:opacity-50">{savingAddress ? 'Saving…' : 'Save Address'}</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-stone-850 font-light block leading-relaxed bg-white border border-stone-150 p-2.5 rounded">
+                      {selectedOrder.address}<br />
+                      {selectedOrder.city}, {selectedOrder.state} - {selectedOrder.pincode}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -208,6 +343,33 @@ export default function OrderDetailsModal({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Add an item to eligible COD orders */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-stone-700">Add Product to Order</h3>
+                {!canAddProducts && <span className="text-[10px] text-amber-700">Only available on unpaid COD orders before shipment</span>}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-stone-50 p-3 rounded border border-stone-200">
+                <select value={productToAdd} onChange={event => {
+                  const product = addableProducts.find(option => String(option.id) === event.target.value);
+                  setProductToAdd(event.target.value);
+                  setSizeToAdd(isVariantAvailable(product, '3ml') ? '3ml' : '6ml');
+                }} disabled={!canAddProducts || addingProduct} className="sm:col-span-2 border border-stone-200 rounded px-2 py-2 text-xs bg-white">
+                  <option value="">Select available product</option>
+                  {addableProducts.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}
+                </select>
+                <select value={sizeToAdd} onChange={event => setSizeToAdd(event.target.value)} disabled={!selectedProduct || addingProduct} className="border border-stone-200 rounded px-2 py-2 text-xs bg-white">
+                  <option value="3ml" disabled={!isVariantAvailable(selectedProduct, '3ml')}>3ml — Rs. {selectedProduct?.price3mloffer || 0}</option>
+                  <option value="6ml" disabled={!isVariantAvailable(selectedProduct, '6ml')}>6ml — Rs. {selectedProduct?.price6mloffer || 0}</option>
+                </select>
+                <input type="number" min="1" max={selectedSizeStock == null ? undefined : selectedSizeStock} value={quantityToAdd} onChange={event => setQuantityToAdd(event.target.value)} disabled={!selectedProduct || addingProduct} className="border border-stone-200 rounded px-2 py-2 text-xs" aria-label="Quantity to add" />
+                <div className="sm:col-span-4 flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-stone-500">Delivery remains Rs. 40; COD fee Rs. 30. Stock is checked when saving.</span>
+                  <button type="button" disabled={!canAddProducts || !selectedProduct || !selectedVariantAvailable || addingProduct} onClick={handleAddProduct} className="shrink-0 px-3 py-2 rounded bg-[#8c6239] text-white text-[10px] font-bold uppercase disabled:opacity-50">{addingProduct ? 'Adding…' : 'Add Product'}</button>
+                </div>
               </div>
             </div>
 
@@ -295,7 +457,7 @@ export default function OrderDetailsModal({
                   {(() => {
                     const items = selectedOrder.items || [];
                     const itemsSubtotal = items.reduce((sum, item) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
-                    const isCod = String(selectedOrder.payment_method || '').toLowerCase().includes('cod');
+                    const isCod = isCodOrder;
                     const codFee = isCod ? 30 : 0;
                     const deliveryCharge = 40;
                     const actualSubtotal = itemsSubtotal > 0 ? itemsSubtotal : (selectedOrder.total_amount - deliveryCharge - codFee);
@@ -317,7 +479,7 @@ export default function OrderDetailsModal({
                           </div>
                         )}
                         <div className="flex justify-between border-t border-stone-200 pt-1.5 font-bold text-stone-900">
-                          <span>Total Amount Paid:</span>
+                          <span>Order Total:</span>
                           <span className="text-[#8c6239]">Rs. {selectedOrder.total_amount}</span>
                         </div>
                       </>
