@@ -163,6 +163,7 @@ export default function AdsManagerModal({
     const cOrderIds = Array.isArray(campaign.order_ids) ? campaign.order_ids : [];
     let totalRevenue = 0;
     let totalOrderProfit = 0;
+    let totalDeliveryCost = 0;
 
     cOrderIds.forEach(orderId => {
       const order = orderMap.get(orderId);
@@ -170,14 +171,18 @@ export default function AdsManagerModal({
         const profitDetails = calculateOrderProfit(order, products);
         totalRevenue += profitDetails.sellingPrice || 0;
         totalOrderProfit += profitDetails.profit || 0;
+        totalDeliveryCost += profitDetails.deliveryCost || 0;
       }
     });
 
+    const totalSpend = numSpend + totalDeliveryCost;
     const netProfitLoss = totalOrderProfit - numSpend;
     const roas = numSpend > 0 ? (totalRevenue / numSpend) : 0;
 
     return {
       numSpend,
+      totalDeliveryCost,
+      totalSpend,
       ordersCount: cOrderIds.length,
       totalRevenue,
       totalOrderProfit,
@@ -188,23 +193,30 @@ export default function AdsManagerModal({
 
   // Overall totals across all campaigns
   const overallCampaignTotals = useMemo(() => {
-    let totalSpend = 0;
+    let totalAdSpend = 0;
     let totalRevenue = 0;
     let totalProfit = 0;
     let uniqueOrderIds = new Set();
 
     adCampaigns.forEach(c => {
       const m = getCampaignMetrics(c);
-      totalSpend += m.numSpend;
+      totalAdSpend += m.numSpend;
       totalRevenue += m.totalRevenue;
       totalProfit += m.netProfitLoss;
       (c.order_ids || []).forEach(id => uniqueOrderIds.add(id));
     });
 
-    const overallRoas = totalSpend > 0 ? (totalRevenue / totalSpend) : 0;
+    const totalDeliveryCost = Array.from(uniqueOrderIds).reduce((total, id) => {
+      const order = orderMap.get(id);
+      return total + (order ? (calculateOrderProfit(order, products).deliveryCost || 0) : 0);
+    }, 0);
+    const totalSpend = totalAdSpend + totalDeliveryCost;
+    const overallRoas = totalAdSpend > 0 ? (totalRevenue / totalAdSpend) : 0;
 
     return {
       totalSpend,
+      totalAdSpend,
+      totalDeliveryCost,
       totalRevenue,
       totalProfit,
       uniqueOrdersCount: uniqueOrderIds.size,
@@ -302,9 +314,12 @@ export default function AdsManagerModal({
               {/* Overall Summary Row */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-stone-50 border border-stone-200 rounded-lg p-3.5">
                 <div>
-                  <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider block">Total Ad Spend</span>
+                  <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider block">Total Amount Spent</span>
                   <span className="text-lg font-extrabold text-stone-900 mt-0.5 block">
                     ₹ {formatCurrency(overallCampaignTotals.totalSpend)}
+                  </span>
+                  <span className="text-[9px] text-stone-500 block mt-0.5">
+                    Ad ₹{formatCurrency(overallCampaignTotals.totalAdSpend)} + Delivery ₹{formatCurrency(overallCampaignTotals.totalDeliveryCost)}
                   </span>
                 </div>
                 <div>
@@ -322,7 +337,7 @@ export default function AdsManagerModal({
                   </span>
                 </div>
                 <div>
-                  <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider block">Blended ROAS</span>
+                  <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider block">Ad ROAS</span>
                   <span className="text-lg font-extrabold text-blue-700 mt-0.5 block">
                     {overallCampaignTotals.overallRoas.toFixed(2)}x
                   </span>
@@ -336,7 +351,7 @@ export default function AdsManagerModal({
                     <thead>
                       <tr className="bg-stone-100/80 border-b border-stone-200 text-stone-500 uppercase tracking-wider font-bold text-[10px]">
                         <th className="p-3">Ad Name / Platform</th>
-                        <th className="p-3 text-right">Ad Spend</th>
+                        <th className="p-3 text-right">Spend + Delivery</th>
                         <th className="p-3 text-center">Linked Orders</th>
                         <th className="p-3 text-right">Revenue</th>
                         <th className="p-3 text-right">Net Profit / Loss</th>
@@ -367,8 +382,10 @@ export default function AdsManagerModal({
                                 </div>
                               </td>
 
-                              <td className="p-3 text-right font-bold text-stone-900 font-mono">
-                                ₹ {formatCurrency(m.numSpend)}
+                              <td className="p-3 text-right font-mono">
+                                <span className="block text-[10px] text-stone-500">Ad ₹{formatCurrency(m.numSpend)}</span>
+                                <span className="block text-[10px] text-stone-500">Delivery ₹{formatCurrency(m.totalDeliveryCost)}</span>
+                                <span className="block font-bold text-stone-900">Total ₹{formatCurrency(m.totalSpend)}</span>
                               </td>
 
                               <td className="p-3 text-center">
@@ -586,18 +603,32 @@ export default function AdsManagerModal({
               <div className="bg-stone-50 border border-stone-200 rounded-lg p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] uppercase font-bold text-stone-500 tracking-wider">
-                    Live Calculation Preview (Selected Orders vs Ad Spend)
+                    Live Calculation Preview (Ad Spend + Delivery)
                   </span>
                   <span className="text-[10px] font-mono text-stone-400">
                     {selectedOrderIds.length} orders selected
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white p-3 rounded border border-stone-200">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-white p-3 rounded border border-stone-200">
                   <div>
                     <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider block">Ad Spend</span>
                     <span className="text-sm font-bold text-rose-700 font-mono block">
                       -₹ {formatCurrency(liveFormMetrics.numSpend)}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider block">Delivery Charge</span>
+                    <span className="text-sm font-bold text-rose-700 font-mono block">
+                      -₹ {formatCurrency(liveFormMetrics.totalDeliveryCost)}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider block">Total Amount Spent</span>
+                    <span className="text-sm font-bold text-rose-800 font-mono block">
+                      -₹ {formatCurrency(liveFormMetrics.numSpend + liveFormMetrics.totalDeliveryCost)}
                     </span>
                   </div>
 
@@ -627,7 +658,7 @@ export default function AdsManagerModal({
 
                 <div className="flex items-center justify-between text-[11px] text-stone-500 px-1">
                   <span>
-                    Formula: <code className="bg-stone-200 px-1 rounded text-stone-800">Net P&L = Orders Gross Profit - Ad Spend</code>
+                    Total spent = Ad spend + delivery. Net P&amp;L already includes delivery in order profit.
                   </span>
                   <span className="font-bold text-blue-700 font-mono">
                     ROAS: {liveFormMetrics.roas.toFixed(2)}x

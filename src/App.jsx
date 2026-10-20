@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from './utils/supabase';
@@ -71,6 +71,7 @@ export default function App() {
     }
   });
   const [dbLoading, setDbLoading] = useState(false);
+  const hasLoadedInitialData = useRef(false);
 
   // Financial summary & modal states
   const [financialSummary, setFinancialSummary] = useState(null);
@@ -116,7 +117,9 @@ export default function App() {
     description: '',
     isOutOfStock: false,
     isOutOfStock3ml: false,
-    isOutOfStock6ml: false
+    isOutOfStock6ml: false,
+    stock3ml: '',
+    stock6ml: ''
   });
   const [uploading, setUploading] = useState(false);
 
@@ -221,7 +224,7 @@ export default function App() {
       if (session?.user) {
         if (session.user.email === ADMIN_EMAIL) {
           setUser(session.user);
-          fetchDatabaseData();
+          loadInitialDatabaseData();
         } else {
           await supabase.auth.signOut();
           setUser(null);
@@ -229,6 +232,7 @@ export default function App() {
         }
       } else {
         setUser(null);
+        hasLoadedInitialData.current = false;
       }
       setAuthLoading(false);
     });
@@ -244,7 +248,7 @@ export default function App() {
       if (session?.user) {
         if (session.user.email === ADMIN_EMAIL) {
           setUser(session.user);
-          fetchDatabaseData();
+          loadInitialDatabaseData();
         } else {
           await supabase.auth.signOut();
           setUser(null);
@@ -297,7 +301,7 @@ export default function App() {
 
       if (data?.session?.user) {
         setUser(data.session.user);
-        fetchDatabaseData();
+        loadInitialDatabaseData();
       }
     } catch (err) {
       setAuthError(err.message || 'Invalid or expired OTP code.');
@@ -330,6 +334,12 @@ export default function App() {
     } finally {
       setDbLoading(false);
     }
+  };
+
+  const loadInitialDatabaseData = () => {
+    if (hasLoadedInitialData.current) return;
+    hasLoadedInitialData.current = true;
+    fetchDatabaseData();
   };
 
   const calculateLocalFinancialSummary = (allOrders = orders) => {
@@ -891,6 +901,10 @@ export default function App() {
     const price3mlOrig = newProduct.productType === 'combo' ? Number(newProduct.comboOrigPrice || price3mlOffer) : Number(newProduct.price3mlOrig || price3mlOffer);
     const price6mlOffer = newProduct.productType === 'combo' ? Number(newProduct.comboPrice || 0) : Number(newProduct.price6mlOffer || 0);
     const price6mlOrig = newProduct.productType === 'combo' ? Number(newProduct.comboOrigPrice || price6mlOffer) : Number(newProduct.price6mlOrig || price6mlOffer);
+    const stock3ml = newProduct.stock3ml === '' ? null : Math.max(0, Math.floor(Number(newProduct.stock3ml)));
+    const stock6ml = newProduct.stock6ml === '' ? null : Math.max(0, Math.floor(Number(newProduct.stock6ml)));
+    const isOutOfStock3ml = stock3ml === 0 || newProduct.isOutOfStock3ml;
+    const isOutOfStock6ml = stock6ml === 0 || newProduct.isOutOfStock6ml;
 
     const payload = {
       id,
@@ -905,10 +919,12 @@ export default function App() {
       description: formattedDesc,
       is_out_of_stock: Boolean(newProduct.isOutOfStock),
       in_stock: !Boolean(newProduct.isOutOfStock),
-      is_out_of_stock_3ml: Boolean(newProduct.isOutOfStock3ml),
-      in_stock_3ml: !Boolean(newProduct.isOutOfStock3ml),
-      is_out_of_stock_6ml: Boolean(newProduct.isOutOfStock6ml),
-      in_stock_6ml: !Boolean(newProduct.isOutOfStock6ml)
+      is_out_of_stock_3ml: isOutOfStock3ml,
+      in_stock_3ml: !isOutOfStock3ml,
+      is_out_of_stock_6ml: isOutOfStock6ml,
+      in_stock_6ml: !isOutOfStock6ml,
+      stock_3ml: stock3ml,
+      stock_6ml: stock6ml
     };
 
     if (editingProduct) {
@@ -946,7 +962,9 @@ export default function App() {
       description: '',
       isOutOfStock: false,
       isOutOfStock3ml: false,
-      isOutOfStock6ml: false
+      isOutOfStock6ml: false,
+      stock3ml: '',
+      stock6ml: ''
     });
   };
 
@@ -2055,7 +2073,7 @@ export default function App() {
                 calculatedProfitTotal={dashboardCalculatedProfitTotal}
                 financialSummary={financialSummary}
                 loadingFinancials={loadingFinancials}
-                fetchFinancialSummary={fetchFinancialSummary}
+                refreshAdminData={fetchDatabaseData}
                 setShowFinancialModal={setShowFinancialModal}
                 setShowManualOrderModal={setShowManualOrderModal}
                 products={products}

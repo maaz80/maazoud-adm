@@ -36,7 +36,7 @@ export default function DashboardView({
   calculatedProfitTotal,
   financialSummary,
   loadingFinancials,
-  fetchFinancialSummary,
+  refreshAdminData,
   setShowFinancialModal,
   setShowManualOrderModal,
   products = [],
@@ -357,10 +357,10 @@ export default function DashboardView({
           )}
 
           <button
-            onClick={fetchFinancialSummary}
+            onClick={refreshAdminData}
             disabled={loadingFinancials}
             className="bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
-            title="Refresh bank payouts and order counts"
+            title="Refresh all admin data"
           >
             <FiRefreshCw className={loadingFinancials ? 'animate-spin text-[#8c6239]' : 'text-stone-500'} size={12} />
             {loadingFinancials ? 'Refreshing...' : 'Refresh Data'}

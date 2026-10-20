@@ -306,8 +306,48 @@ export default function ProductsView({
 
           <div className="border-t border-stone-100 pt-4 space-y-3">
             <span className="text-[10px] font-bold text-stone-700 uppercase tracking-wider block">
-              Stock Availability Controls
+              Stock Availability & Quantities
             </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="text-xs font-medium text-stone-700">
+                3ml pieces left
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={newProduct.stock3ml}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setNewProduct({
+                      ...newProduct,
+                      stock3ml: value,
+                      ...(value !== '' ? { isOutOfStock3ml: Number(value) === 0 } : {})
+                    });
+                  }}
+                  placeholder="Leave blank for unlimited / untracked"
+                  className="mt-1 w-full bg-white border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                />
+              </label>
+              <label className="text-xs font-medium text-stone-700">
+                6ml pieces left
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={newProduct.stock6ml}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setNewProduct({
+                      ...newProduct,
+                      stock6ml: value,
+                      ...(value !== '' ? { isOutOfStock6ml: Number(value) === 0 } : {})
+                    });
+                  }}
+                  placeholder="Leave blank for unlimited / untracked"
+                  className="mt-1 w-full bg-white border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none"
+                />
+              </label>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-stone-50 border border-stone-200 rounded">
               <label className="flex items-center gap-2 text-xs font-medium text-stone-800 cursor-pointer bg-white p-2.5 rounded border border-stone-200 hover:border-red-400">
                 <input
@@ -444,27 +484,34 @@ export default function ProductsView({
                           type="button"
                           onClick={() => handleToggleStock(prod, '3ml')}
                           className={`flex-1 py-0.5 px-1 rounded text-[8px] font-bold uppercase transition-all cursor-pointer ${
-                            (prod.is_out_of_stock_3ml || prod.in_stock_3ml === false || prod.is_out_of_stock || prod.in_stock === false)
+                            (prod.stock_3ml != null && Number(prod.stock_3ml) <= 0 || prod.is_out_of_stock_3ml || prod.in_stock_3ml === false || prod.is_out_of_stock || prod.in_stock === false)
                               ? "bg-orange-100 text-orange-800 border border-orange-200"
                               : "bg-stone-100 text-stone-700 border border-stone-200 hover:bg-stone-200"
                           }`}
                           title="Click to toggle 3ml stock"
                         >
-                          3ml: {(prod.is_out_of_stock_3ml || prod.in_stock_3ml === false || prod.is_out_of_stock || prod.in_stock === false) ? "OOS" : "OK"}
+                          3ml: {(prod.stock_3ml != null && Number(prod.stock_3ml) <= 0 || prod.is_out_of_stock_3ml || prod.in_stock_3ml === false || prod.is_out_of_stock || prod.in_stock === false) ? "OOS" : "OK"}
                         </button>
                         <button
                           type="button"
                           onClick={() => handleToggleStock(prod, '6ml')}
                           className={`flex-1 py-0.5 px-1 rounded text-[8px] font-bold uppercase transition-all cursor-pointer ${
-                            (prod.is_out_of_stock_6ml || prod.in_stock_6ml === false || prod.is_out_of_stock || prod.in_stock === false)
+                            (prod.stock_6ml != null && Number(prod.stock_6ml) <= 0 || prod.is_out_of_stock_6ml || prod.in_stock_6ml === false || prod.is_out_of_stock || prod.in_stock === false)
                               ? "bg-amber-100 text-amber-800 border border-amber-200"
                               : "bg-stone-100 text-stone-700 border border-stone-200 hover:bg-stone-200"
                           }`}
                           title="Click to toggle 6ml stock"
                         >
-                          6ml: {(prod.is_out_of_stock_6ml || prod.in_stock_6ml === false || prod.is_out_of_stock || prod.in_stock === false) ? "OOS" : "OK"}
+                          6ml: {(prod.stock_6ml != null && Number(prod.stock_6ml) <= 0 || prod.is_out_of_stock_6ml || prod.in_stock_6ml === false || prod.is_out_of_stock || prod.in_stock === false) ? "OOS" : "OK"}
                         </button>
                       </div>
+                      {(prod.stock_3ml != null || prod.stock_6ml != null) && (
+                        <div className="text-[9px] text-red-600 font-bold text-center">
+                          {prod.stock_3ml != null && <span>3ml: {prod.stock_3ml} left</span>}
+                          {prod.stock_3ml != null && prod.stock_6ml != null && <span> · </span>}
+                          {prod.stock_6ml != null && <span>6ml: {prod.stock_6ml} left</span>}
+                        </div>
+                      )}
                     </div>
                   </td>
                   <td className="p-4">
@@ -493,8 +540,10 @@ export default function ProductsView({
                             price6mlOffer: String(prod.price6mloffer || ''),
                             description: cleanProductDescription(prod.description || ''),
                             isOutOfStock: Boolean(prod.is_out_of_stock || prod.in_stock === false),
-                            isOutOfStock3ml: Boolean(prod.is_out_of_stock_3ml || prod.in_stock_3ml === false),
-                            isOutOfStock6ml: Boolean(prod.is_out_of_stock_6ml || prod.in_stock_6ml === false)
+                            isOutOfStock3ml: prod.stock_3ml != null ? Number(prod.stock_3ml) <= 0 : Boolean(prod.is_out_of_stock_3ml || prod.in_stock_3ml === false),
+                            isOutOfStock6ml: prod.stock_6ml != null ? Number(prod.stock_6ml) <= 0 : Boolean(prod.is_out_of_stock_6ml || prod.in_stock_6ml === false),
+                            stock3ml: prod.stock_3ml == null ? '' : String(prod.stock_3ml),
+                            stock6ml: prod.stock_6ml == null ? '' : String(prod.stock_6ml)
                           });
                           setShowProductForm(true);
                         }}
