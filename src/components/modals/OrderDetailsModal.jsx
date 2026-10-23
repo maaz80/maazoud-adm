@@ -67,6 +67,7 @@ export default function OrderDetailsModal({
   const [sizeToAdd, setSizeToAdd] = useState('3ml');
   const [quantityToAdd, setQuantityToAdd] = useState(1);
   const [addingProduct, setAddingProduct] = useState(false);
+  const [deletingOrder, setDeletingOrder] = useState(false);
 
   if (!selectedOrder) return null;
 
@@ -105,6 +106,22 @@ export default function OrderDetailsModal({
     await fetchOrders();
     setIsEditingAddress(false);
     alert('Shipping address updated. If a courier shipment already exists, update its address separately with the courier.');
+  };
+
+  const handleDeleteOrder = async () => {
+    if (!window.confirm(`Permanently delete order ${selectedOrder.id}? This cannot be undone.`)) return;
+
+    setDeletingOrder(true);
+    const { error } = await supabase.from('orders').delete().eq('id', selectedOrder.id);
+    setDeletingOrder(false);
+
+    if (error) {
+      alert('Failed to delete order: ' + error.message);
+      return;
+    }
+
+    setSelectedOrder(null);
+    await fetchOrders();
   };
 
   const handleAddProduct = async () => {
@@ -897,12 +914,23 @@ export default function OrderDetailsModal({
                 </button>
               )}
             </div>
-            <button
-              onClick={() => setSelectedOrder(null)}
-              className="px-5 py-2 bg-stone-950 hover:bg-stone-850 text-white text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
-            >
-              Close
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDeleteOrder}
+                disabled={deletingOrder}
+                className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deletingOrder ? 'Deleting...' : 'Delete Order'}
+              </button>
+              <button
+                onClick={() => setSelectedOrder(null)}
+                disabled={deletingOrder}
+                className="px-5 py-2 bg-stone-950 hover:bg-stone-850 text-white text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all disabled:opacity-50"
+              >
+                Close
+              </button>
+            </div>
           </div>
 
         </div>
