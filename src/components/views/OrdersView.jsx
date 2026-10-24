@@ -1,5 +1,6 @@
 import React from 'react';
 import { FiCheckCircle, FiClock, FiXCircle } from 'react-icons/fi';
+import { isDeliveryExceptionOrder } from '../../utils/helpers';
 
 export default function OrdersView({
   activeTab,
@@ -199,7 +200,9 @@ export default function OrdersView({
                   <td className="p-4 font-bold text-stone-900">Rs. {order.total_amount}</td>
                   <td className="p-4">
                     <span className={`inline-block px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full ${
-                      order.status === 'Delivered'
+                      isDeliveryExceptionOrder(order)
+                        ? 'bg-amber-100 text-amber-800'
+                        : order.status === 'Delivered'
                         ? 'bg-green-100 text-green-800'
                         : order.status === 'RTO'
                           ? 'bg-orange-100 text-orange-800'
@@ -209,7 +212,9 @@ export default function OrdersView({
                             ? 'bg-red-100 text-red-800'
                             : 'bg-yellow-100 text-yellow-800'
                     }`}>
-                      {order.status}
+                      {isDeliveryExceptionOrder(order)
+                        ? order.shipment_details?.zipypost_status || order.shipment_details?.shiprocket_status || order.shiprocket_status || 'Exception'
+                        : order.status}
                     </span>
                   </td>
                   <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -223,7 +228,7 @@ export default function OrdersView({
                           <FiClock size={12} />
                         </button>
                       )}
-                      {order.status !== 'Delivered' && order.status !== 'Cancelled' && order.status !== 'RTO' && (
+                      {order.status !== 'Delivered' && order.status !== 'Cancelled' && order.status !== 'RTO' && !isDeliveryExceptionOrder(order) && (
                         <button
                           onClick={() => requestOrderStatusUpdate(order, 'Delivered')}
                           className="p-1.5 bg-stone-50 hover:bg-green-50 text-green-600 border border-stone-200 hover:border-green-300 rounded transition-colors cursor-pointer"

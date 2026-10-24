@@ -13,10 +13,11 @@ import {
   FiLayers,
   FiShoppingBag,
   FiXCircle,
+  FiAlertCircle,
   FiCalendar,
   FiTarget
 } from 'react-icons/fi';
-import { calculateOrderProfit, isOrderInDateRange, getCurrentCourierStatusText, isRtoOrder } from '../../utils/helpers';
+import { calculateOrderProfit, isOrderInDateRange, getCurrentCourierStatusText, getOrderStatus } from '../../utils/helpers';
 import StoreMetricsModal from '../modals/StoreMetricsModal';
 
 const formatApprox = (val) => Math.round(parseFloat(val) || 0).toLocaleString('en-IN');
@@ -135,7 +136,8 @@ export default function DashboardView({
   if (activeTab !== 'dashboard') return null;
 
   // --- Dynamic Razorpay & Payout Calculations ---
-  const rtoOrders = (orders || []).filter(isRtoOrder);
+  const rtoOrders = (orders || []).filter(order => getOrderStatus(order) === 'RTO');
+  const exceptionOrders = (orders || []).filter(order => getOrderStatus(order) === 'Exception');
   const getRtoStage = (order) => {
     const statusText = getCurrentCourierStatusText(order);
     if (/\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr|out for delivery)\b/.test(statusText)) return 'other';
@@ -146,7 +148,7 @@ export default function DashboardView({
   };
   const rtoInTransitOrders = rtoOrders.filter(order => getRtoStage(order) === 'in_transit');
   const rtoDeliveredOrders = rtoOrders.filter(order => getRtoStage(order) === 'delivered');
-  const nonCancelledOrders = (orders || []).filter(o => o.status !== 'Cancelled' && !rtoOrders.some(rto => rto.id === o.id));
+  const nonCancelledOrders = (orders || []).filter(o => !['Cancelled', 'RTO'].includes(getOrderStatus(o)));
   const zipypostRtoCharges = financialSummary?.zipypost?.rto_charges_by_awb || {};
   const getRtoLedgerCharge = (order) => {
     const awb = String(order.shipment_details?.zipypost_awb || order.zipypost_awb || '').trim().toUpperCase();
@@ -521,6 +523,21 @@ export default function DashboardView({
                 <h3 className="text-xl font-bold text-rose-900">{orderStatusCounts.Cancelled}</h3>
               </div>
               <p className="text-[9px] text-rose-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">Cancelled List &rarr;</p>
+            </div>
+          </div>
+
+          <div
+            onClick={() => setStoreMetricModalType('exception_orders')}
+            className="bg-white border border-amber-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-amber-500 transition-all hover:bg-amber-50/50 group"
+            title="Click to review orders requiring another delivery attempt"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-amber-700 tracking-wider">Delivery Exceptions</span>
+              <FiAlertCircle className="text-amber-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-amber-900">{exceptionOrders.length}</h3>
+              <p className="text-[9px] text-amber-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">Needs another attempt · View orders →</p>
             </div>
           </div>
 
@@ -1010,7 +1027,9 @@ export default function DashboardView({
                           <span className="font-semibold text-stone-800">{order.customer_name}</span>
                         </div>
                         <span className="text-[10px] text-stone-400 block mt-0.5">
-                          Delivered: {delDate.toLocaleDateString("en-US", { month: 'short', day: 'numeric' })} at {delDate.toLocaleTimeString("en-US", { hour: '2-digit', minute: '2-digit' })}
+                          {delDate
+                            ? `Delivered: ${delDate.toLocaleDateString("en-US", { month: 'short', day: 'numeric' })} at ${delDate.toLocaleTimeString("en-US", { hour: '2-digit', minute: '2-digit' })}`
+                            : 'Delivery date unavailable'}
                         </span>
                       </div>
                       <div className="text-right shrink-0">

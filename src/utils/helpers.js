@@ -42,8 +42,143 @@ export const isRtoOrder = (order) => {
   const statusText = getOrderTrackingStatusText(order);
   return /\brto\b|return to origin|returned to origin|return in transit|return initiated|return notified|return delivered/.test(statusText);
 };
+
+export const isDeliveryExceptionOrder = (order) => {
+  const currentStatus = getCurrentCourierStatusText(order);
+  return /\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr)\b/.test(currentStatus);
+};
+
+export const getOrderStatus = (order) => {
+  const status = String(order?.status || '').toLowerCase();
+  if (status === 'cancelled' || status === 'canceled') return 'Cancelled';
+  if (isDeliveryExceptionOrder(order)) return 'Exception';
+  const currentCourierStatus = getCurrentCourierStatusText(order);
+  if (/\brto\b|return to origin|returned to origin|return in transit|return initiated|return notified|return delivered/.test(currentCourierStatus)) return 'RTO';
+  if (/\bout for delivery\b/.test(currentCourierStatus)) return 'Shipped';
+  if (status === 'delivered') return 'Delivered';
+  if (status === 'shipped') return 'Shipped';
+  return 'Processing';
+};
+
+export const getOrderDeliveryDate = (order) => {
+  const shipmentDetails = order?.shipment_details;
+  const tracking = shipmentDetails?.zipypost_tracking_info || {};
+  const getValidDate = (values) => {
+    for (const value of values) {
+      if (!value) continue;
+      const date = new Date(value);
+      if (!Number.isNaN(date.getTime())) return date;
+    }
+    return null;
+  };
+  const getDeliveredEventDate = (value, depth = 0) => {
+    if (!value || depth > 7) return null;
+    if (Array.isArray(value)) {
+      for (let index = value.length - 1; index >= 0; index--) {
+        const found = getDeliveredEventDate(value[index], depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (typeof value !== 'object') return null;
+
+    const eventText = [value.status, value.tracking_status, value.activity, value.description, value.scan, value.remark]
+      .filter(Boolean).join(' ').toLowerCase().replace(/[_-]+/g, ' ');
+    if (/\bdelivered\b/.test(eventText) && !/not delivered|undelivered|attempt|exception|ndr|out for delivery/.test(eventText)) {
+      const eventDate = getValidDate([
+        value.delivered_date,
+        value.delivery_date,
+        value.delivered_at,
+        value.date,
+        value.event_date,
+        value.scan_date,
+        value.scan_time,
+        value.timestamp,
+        value.created_at,
+        value.updated_at
+      ]);
+      if (eventDate) return eventDate;
+    }
+
+    for (const [key, nested] of Object.entries(value)) {
+      if (/history|events|scans|track|activity|result|data/i.test(key)) {
+        const found = getDeliveredEventDate(nested, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const storedDeliveryDateIsConfirmed = ['courier', 'sync_observed'].includes(shipmentDetails?.delivery_date_source);
+  const courierDeliveryDate = getValidDate([
+    tracking.delivered_date,
+    tracking.delivered_at,
+    tracking.deliveredAt,
+    tracking.delivery_time,
+    tracking.delivery_date,
+    shipmentDetails?.last_webhook_payload?.delivered_date,
+    shipmentDetails?.last_webhook_payload?.delivered_at,
+    ...(storedDeliveryDateIsConfirmed ? [shipmentDetails?.delivered_date] : [])
+  ]);
+  if (courierDeliveryDate) return courierDeliveryDate;
+  const eventDeliveryDate = getDeliveredEventDate(tracking)
+    || getDeliveredEventDate(shipmentDetails?.last_webhook_payload);
+  if (eventDeliveryDate) return eventDeliveryDate;
+
+  const lastSyncTime = shipmentDetails?.last_synced_at ? new Date(shipmentDetails.last_synced_at).getTime() : NaN;
+  const ignoredSyncDates = Array.isArray(shipmentDetails?.ignored_sync_delivery_dates) ? shipmentDetails.ignored_sync_delivery_dates : [];
+  const isSyncGeneratedDate = (value) => {
+    const date = getValidDate([value]);
+    if (!date) return false;
+    if (ignoredSyncDates.some(ignored => {
+      const ignoredDate = new Date(ignored);
+      return !Number.isNaN(ignoredDate.getTime()) && Math.abs(date.getTime() - ignoredDate.getTime()) < 1000;
+    })) return true;
+    return Number.isFinite(lastSyncTime) && Math.abs(date.getTime() - lastSyncTime) < 60000;
+  };
+  const deliveryDate = getValidDate([
+    shipmentDetails?.custom_delivery_date,
+    ...(isSyncGeneratedDate(order?.delivery_date) ? [] : [order?.delivery_date]),
+    ...(isSyncGeneratedDate(shipmentDetails?.delivered_date) ? [] : [shipmentDetails?.delivered_date]),
+    tracking.delivery_date
+  ]);
+  if (deliveryDate) return deliveryDate;
+
+  if (Array.isArray(shipmentDetails)) {
+    for (let i = shipmentDetails.length - 1; i >= 0; i--) {
+      const item = shipmentDetails[i];
+      const date = getValidDate([item?.custom_delivery_date, item?.last_webhook_payload?.delivered_date, item?.delivered_date, item?.shipment_track?.[0]?.delivered_date, item?.tracking_data?.shipment_track?.[0]?.delivered_date]);
+      if (date) return date;
+    }
+  } else if (shipmentDetails && typeof shipmentDetails === 'object') {
+    const date = getValidDate([shipmentDetails.shipment_track?.[0]?.delivered_date, shipmentDetails.tracking_data?.shipment_track?.[0]?.delivered_date]);
+    if (date) return date;
+  }
+  return null;
+};
+
+export const filterDeliveredOrdersByDate = (allDeliveredList, filterType, now = new Date()) => {
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayStart = new Date(todayStart);
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  const last7DaysStart = new Date(todayStart);
+  last7DaysStart.setDate(last7DaysStart.getDate() - 7);
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  return (allDeliveredList || []).filter(order => {
+    if (filterType === 'all') return true;
+    const deliveryDate = getOrderDeliveryDate(order);
+    if (!deliveryDate) return false;
+    if (filterType === 'today') return deliveryDate >= todayStart;
+    if (filterType === 'yesterday') return deliveryDate >= yesterdayStart && deliveryDate < todayStart;
+    if (filterType === 'last7days') return deliveryDate >= last7DaysStart;
+    if (filterType === 'thisMonth') return deliveryDate >= thisMonthStart;
+    return false;
+  });
+};
 export const COMBO_PRODUCT_MARKER = '<!-- product-type:combo -->';
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '' : 'https://maazoud.vercel.app');
+const viteEnv = import.meta.env || {};
+export const API_BASE = viteEnv.VITE_API_BASE_URL || (viteEnv.DEV ? '' : 'https://maazoud.vercel.app');
 
 export const getWhatsAppLink = (order) => {
   if (!order) return "#";

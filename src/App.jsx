@@ -13,9 +13,13 @@ import {
   buildProductDescription,
   calculateOrderProfit,
   formatDeliveryEstimate,
+  getOrderDeliveryDate,
+  filterDeliveredOrdersByDate,
   isOrderInDateRange,
   getDateRangeBounds,
-  isRtoOrder
+  getOrderStatus,
+  isRtoOrder,
+  isDeliveryExceptionOrder
 } from './utils/helpers';
 
 // Components
@@ -538,8 +542,23 @@ export default function App() {
   const fetchOrders = async () => {
     const { data } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
     if (data) {
-      setOrders(data);
-      setFinancialSummary(previous => previous || calculateLocalFinancialSummary(data));
+      const normalizedOrders = data.map(order => (
+        order.status === 'Delivered' && isDeliveryExceptionOrder(order)
+          ? { ...order, status: isRtoOrder(order) ? 'RTO' : 'Shipped' }
+          : order
+      ));
+      const correctedRtoIds = normalizedOrders.filter((order, index) => order.status !== data[index].status && order.status === 'RTO').map(order => order.id);
+      const correctedShippedIds = normalizedOrders.filter((order, index) => order.status !== data[index].status && order.status === 'Shipped').map(order => order.id);
+      if (correctedRtoIds.length || correctedShippedIds.length) {
+        const corrections = await Promise.all([
+          correctedRtoIds.length ? supabase.from('orders').update({ status: 'RTO' }).in('id', correctedRtoIds) : Promise.resolve({ error: null }),
+          correctedShippedIds.length ? supabase.from('orders').update({ status: 'Shipped' }).in('id', correctedShippedIds) : Promise.resolve({ error: null })
+        ]);
+        corrections.forEach(({ error }) => error && console.warn('Failed to correct a delivered order with a current delivery exception:', error));
+        await fetchFinancialSummary(normalizedOrders);
+      }
+      setOrders(normalizedOrders);
+      setFinancialSummary(previous => previous || calculateLocalFinancialSummary(normalizedOrders));
     }
   };
 
@@ -1831,7 +1850,7 @@ export default function App() {
         const itemsText = order.items ? order.items.map(i => `${i.product?.name || 'Attar'} (${i.selectedSize || '3ml'}) x${i.quantity}`).join(', ') : 'N/A';
         return [
           order.id,
-          delDate.toLocaleDateString(),
+          delDate ? delDate.toLocaleDateString() : 'Not recorded',
           order.customer_name || 'N/A',
           order.phone || '',
           itemsText,
@@ -1983,84 +2002,7 @@ export default function App() {
     }
   };
 
-  // Helper getters
-  const getOrderStatus = (order) => {
-    const s = String(order?.status || '').toLowerCase();
-    const courierStatus = [
-      order?.shipment_details?.zipypost_status,
-      order?.shipment_details?.zipypost_tracking_info?.status,
-      order?.shipment_details?.zipypost_tracking_info?.tracking_status,
-      order?.shipment_details?.shiprocket_status,
-      order?.zipypost_status,
-      order?.shiprocket_status
-    ].filter(Boolean).join(' ').toLowerCase().replace(/[_-]+/g, ' ');
-    if (isRtoOrder(order)) return 'RTO';
-    if (/\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr|out for delivery)\b/.test(courierStatus)) return 'Shipped';
-    if (s === 'delivered') return 'Delivered';
-    if (s === 'shipped') return 'Shipped';
-    if (s === 'cancelled' || s === 'canceled') return 'Cancelled';
-    return 'Processing';
-  };
-
-  const getOrderDeliveryDate = (order) => {
-    const sd = order?.shipment_details;
-    const getValidDate = (values) => {
-      for (const value of values) {
-        if (!value) continue;
-        const date = new Date(value);
-        if (!Number.isNaN(date.getTime())) return date;
-      }
-      return null;
-    };
-    const deliveryDate = getValidDate([
-      order?.delivery_date,
-      sd?.custom_delivery_date,
-      sd?.delivered_date,
-      sd?.zipypost_tracking_info?.delivered_date,
-      sd?.zipypost_tracking_info?.delivery_date,
-      sd?.zipypost_tracking_info?.delivered_at,
-      sd?.zipypost_tracking_info?.delivery_time,
-      sd?.last_webhook_payload?.delivered_date,
-      sd?.last_webhook_payload?.delivered_at
-    ]);
-    if (deliveryDate) return deliveryDate;
-    if (Array.isArray(sd)) {
-      for (let i = sd.length - 1; i >= 0; i--) {
-        const item = sd[i];
-        const date = getValidDate([item?.custom_delivery_date, item?.last_webhook_payload?.delivered_date, item?.delivered_date, item?.shipment_track?.[0]?.delivered_date, item?.tracking_data?.shipment_track?.[0]?.delivered_date]);
-        if (date) return date;
-      }
-    } else if (sd && typeof sd === 'object') {
-      const date = getValidDate([sd.shipment_track?.[0]?.delivered_date, sd.tracking_data?.shipment_track?.[0]?.delivered_date]);
-      if (date) return date;
-    }
-    return new Date(order?.created_at || Date.now());
-  };
-
-  const filterDeliveredOrdersByDate = (allDeliveredList, filterType) => {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterdayStart = new Date(todayStart);
-    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-    const last7DaysStart = new Date(todayStart);
-    last7DaysStart.setDate(last7DaysStart.getDate() - 7);
-    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    return allDeliveredList.filter(order => {
-      const delDate = getOrderDeliveryDate(order);
-      if (filterType === 'today') {
-        return delDate >= todayStart;
-      } else if (filterType === 'yesterday') {
-        return delDate >= yesterdayStart && delDate < todayStart;
-      } else if (filterType === 'last7days') {
-        return delDate >= last7DaysStart;
-      } else if (filterType === 'thisMonth') {
-        return delDate >= thisMonthStart;
-      }
-      return true; // 'all'
-    });
-  };
-
+  // Financial & Order calculations
   // Financial & Order calculations
   const nonCancelledOrders = orders.filter(o => !['Cancelled', 'RTO'].includes(getOrderStatus(o)));
   const allDeliveredOrders = orders.filter(o => getOrderStatus(o) === 'Delivered');
@@ -2072,6 +2014,7 @@ export default function App() {
     Shipped: orders.filter(o => getOrderStatus(o) === 'Shipped').length,
     Delivered: allDeliveredOrders.length,
     Cancelled: orders.filter(o => getOrderStatus(o) === 'Cancelled').length,
+    Exception: orders.filter(o => getOrderStatus(o) === 'Exception').length,
     RTO: allRtoOrders.length
   };
 
@@ -2113,10 +2056,11 @@ export default function App() {
 
   const dashboardOrderStatusCounts = {
     All: dashboardOrders.length,
-    Processing: dashboardOrders.filter(o => getOrderStatus(o) === 'Processing' || o.status === 'Placed').length,
+    Processing: dashboardOrders.filter(o => getOrderStatus(o) === 'Processing').length,
     Shipped: dashboardOrders.filter(o => getOrderStatus(o) === 'Shipped').length,
     Delivered: dashboardDeliveredOrders.length,
     Cancelled: dashboardOrders.filter(o => getOrderStatus(o) === 'Cancelled').length,
+    Exception: dashboardOrders.filter(o => getOrderStatus(o) === 'Exception').length,
     RTO: dashboardOrders.filter(o => getOrderStatus(o) === 'RTO').length
   };
 
@@ -2147,7 +2091,7 @@ export default function App() {
     return true;
   });
 
-  const orderStatusFilters = ['All', 'Processing', 'Shipped', 'Delivered', 'RTO', 'Cancelled'];
+  const orderStatusFilters = ['All', 'Processing', 'Shipped', 'Delivered', 'Exception', 'RTO', 'Cancelled'];
 
   if (authLoading && !user) {
     return (
@@ -2245,7 +2189,7 @@ export default function App() {
                 dashboardDeliveredFilter={dashboardDeliveredFilter}
                 setDashboardDeliveredFilter={setDashboardDeliveredFilter}
                 filterDeliveredOrdersByDate={filterDeliveredOrdersByDate}
-                allDeliveredOrders={dashboardDeliveredOrders}
+                allDeliveredOrders={allDeliveredOrders}
                 deliveredRevenues={deliveredRevenues}
                 getOrderDeliveryDate={getOrderDeliveryDate}
                 dashboardDateFilter={dashboardDateFilter}

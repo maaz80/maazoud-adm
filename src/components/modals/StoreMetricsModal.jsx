@@ -11,7 +11,7 @@ import {
   FiCreditCard,
   FiXCircle
 } from 'react-icons/fi';
-import { calculateOrderProfit, getCurrentCourierStatusText, isRtoOrder } from '../../utils/helpers';
+import { calculateOrderProfit, getCurrentCourierStatusText, getOrderStatus } from '../../utils/helpers';
 
 export default function StoreMetricsModal({
   isOpen,
@@ -80,6 +80,10 @@ export default function StoreMetricsModal({
     return (orders || []).filter(o => o.status === 'Cancelled');
   }, [orders]);
 
+  const exceptionOrders = useMemo(() => {
+    return (orders || []).filter(order => getOrderStatus(order) === 'Exception');
+  }, [orders]);
+
   const getRtoStage = (order) => {
     const statusText = getCurrentCourierStatusText(order);
     if (/\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr|out for delivery)\b/.test(statusText)) return 'other';
@@ -90,7 +94,7 @@ export default function StoreMetricsModal({
   };
 
   const rtoOrders = useMemo(() => {
-    return (orders || []).filter(isRtoOrder);
+    return (orders || []).filter(order => getOrderStatus(order) === 'RTO');
   }, [orders]);
 
   // Razorpay settlements list
@@ -176,6 +180,11 @@ export default function StoreMetricsModal({
     modalSubtitle = `List of all cancelled customer orders (${cancelledOrders.length} Orders)`;
     icon = <FiXCircle className="text-rose-700" size={18} />;
     iconBg = 'bg-rose-100 border-rose-200';
+  } else if (modalType === 'exception_orders') {
+    modalTitle = 'Delivery Exceptions (Awaiting Another Attempt)';
+    modalSubtitle = `Orders with a failed/exception delivery attempt (${exceptionOrders.length} Orders)`;
+    icon = <FiClock className="text-amber-700" size={18} />;
+    iconBg = 'bg-amber-100 border-amber-200';
   } else if (modalType === 'rto_orders') {
     modalTitle = 'RTO Orders & ZipyPost Billing';
     modalSubtitle = `Returned shipments with per-AWB net charges (${rtoOrders.length} Orders)`;
@@ -1498,6 +1507,50 @@ export default function StoreMetricsModal({
                           <td colSpan={8} className="p-6 text-center text-stone-400 italic">No cancelled orders matching query.</td>
                         </tr>
                       )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+
+          {modalType === 'exception_orders' && (() => {
+            const q = searchQuery.toLowerCase().trim();
+            const filtered = exceptionOrders.filter(order => {
+              const currentStatus = getCurrentCourierStatusText(order);
+              const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || '';
+              return [order.id, order.customer_name, order.phone, order.city, order.state, awb, currentStatus]
+                .some(value => String(value || '').toLowerCase().includes(q));
+            });
+            return (
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    These orders are not marked delivered; the courier may attempt delivery again.
+                  </p>
+                  <div className="relative w-full sm:max-w-xs">
+                    <FiSearch className="absolute left-3 top-2.5 text-stone-400" size={14} />
+                    <input type="search" placeholder="Search order, customer, AWB..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full rounded border border-stone-200 bg-stone-50 py-1.5 pl-9 pr-3 text-xs text-stone-800 outline-none focus:border-amber-600" />
+                  </div>
+                </div>
+                <div className="overflow-x-auto rounded border border-stone-200">
+                  <table className="w-full min-w-[850px] border-collapse text-left text-xs">
+                    <thead><tr className="bg-amber-100/70 text-[9px] font-bold uppercase tracking-wider text-amber-950"><th className="p-3">Order</th><th className="p-3">Customer</th><th className="p-3">Location</th><th className="p-3">Courier Status</th><th className="p-3">AWB</th><th className="p-3 text-right">Order Value</th><th className="p-3 text-center">Details</th></tr></thead>
+                    <tbody className="divide-y divide-amber-50">
+                      {filtered.length ? filtered.map(order => {
+                        const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || '—';
+                        return (
+                          <tr key={order.id} className="hover:bg-amber-50/40">
+                            <td className="p-3"><span className="block font-mono font-bold text-stone-900">{order.id}</span><span className="text-[10px] text-stone-400">{order.created_at ? new Date(order.created_at).toLocaleDateString('en-IN') : '—'}</span></td>
+                            <td className="p-3"><span className="block font-semibold text-stone-800">{order.customer_name || 'Customer'}</span><span className="font-mono text-[10px] text-stone-500">{order.phone || '—'}</span></td>
+                            <td className="p-3 text-stone-600">{[order.city, order.state, order.pincode].filter(Boolean).join(', ') || order.address || '—'}</td>
+                            <td className="p-3"><span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold uppercase text-amber-800">{order.shipment_details?.zipypost_status || order.shipment_details?.shiprocket_status || order.shiprocket_status || 'Exception'}</span></td>
+                            <td className="p-3 font-mono text-[10px] text-stone-600">{awb}</td>
+                            <td className="p-3 text-right font-semibold text-stone-800">₹{Number(order.total_amount || 0).toLocaleString('en-IN')}</td>
+                            <td className="p-3 text-center"><button type="button" onClick={() => setSelectedOrder && setSelectedOrder(order)} className="cursor-pointer rounded border border-stone-200 bg-white px-2 py-1 text-[10px] font-bold text-stone-700 hover:bg-stone-50">Details</button></td>
+                          </tr>
+                        );
+                      }) : <tr><td colSpan={7} className="p-7 text-center italic text-stone-400">No delivery exceptions found.</td></tr>}
                     </tbody>
                   </table>
                 </div>

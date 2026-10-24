@@ -190,11 +190,13 @@ export default function DeliveredListModal({
                         <td className="p-3 font-mono font-bold text-stone-900">{order.id}</td>
                         <td className="p-3 text-stone-600">
                           <span className="block font-semibold">
-                            {delDate.toLocaleDateString("en-US", { month: 'short', day: 'numeric', year: 'numeric' })}
+                            {delDate ? delDate.toLocaleDateString("en-US", { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not recorded'}
                           </span>
-                          <span className="text-[10px] text-stone-400">
-                            {delDate.toLocaleTimeString("en-US", { hour: '2-digit', minute: '2-digit' })}
-                          </span>
+                          {delDate && (
+                            <span className="text-[10px] text-stone-400">
+                              {delDate.toLocaleTimeString("en-US", { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
                         </td>
                         <td className="p-3">
                           <span className="font-bold text-stone-900 block">{order.customer_name || 'N/A'}</span>
