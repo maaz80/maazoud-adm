@@ -1,4 +1,47 @@
 export const ADMIN_EMAIL = 'maazforlap@gmail.com';
+
+export const getOrderTrackingStatusText = (order) => {
+  const parts = [order?.status, order?.zipypost_status, order?.shiprocket_status];
+  const visit = (value, depth = 0) => {
+    if (value == null || depth > 7) return;
+    if (typeof value === 'string' || typeof value === 'number') {
+      parts.push(String(value));
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(item => visit(item, depth + 1));
+      return;
+    }
+    if (typeof value === 'object') {
+      Object.entries(value).forEach(([key, item]) => {
+        if (/status|tracking|remark|description|activity|scan|event|rto|delivery|message/i.test(key)) {
+          visit(item, depth + 1);
+        }
+      });
+    }
+  };
+  visit(order?.shipment_details);
+  return parts.filter(Boolean).join(' ').toLowerCase().replace(/[_-]+/g, ' ');
+};
+
+export const getCurrentCourierStatusText = (order) => {
+  const details = order?.shipment_details || {};
+  const zipyTracking = details.zipypost_tracking_info || {};
+  const usesZipypost = String(details.carrier || '').toLowerCase().includes('zipy') || Boolean(details.zipypost_awb);
+  const statuses = usesZipypost
+    ? [details.zipypost_status, zipyTracking.current_status, zipyTracking.status, zipyTracking.tracking_status]
+    : [details.shiprocket_status, order?.shiprocket_status, details.current_status, details.tracking_status];
+  return [...statuses, order?.status]
+    .filter(value => typeof value === 'string' || typeof value === 'number')
+    .join(' ')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
+};
+
+export const isRtoOrder = (order) => {
+  const statusText = getOrderTrackingStatusText(order);
+  return /\brto\b|return to origin|returned to origin|return in transit|return initiated|return notified|return delivered/.test(statusText);
+};
 export const COMBO_PRODUCT_MARKER = '<!-- product-type:combo -->';
 export const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '' : 'https://maazoud.vercel.app');
 

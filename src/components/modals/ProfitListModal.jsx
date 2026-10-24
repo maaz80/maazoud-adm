@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { calculateOrderProfit } from '../../utils/helpers';
 
 export default function ProfitListModal({
@@ -9,6 +9,8 @@ export default function ProfitListModal({
   calculatedSalesTotal,
   calculatedDeliveryTotal,
   calculatedProfitTotal,
+  adCampaigns = [],
+  mode = 'normal',
   inlineEditingCell,
   setInlineEditingCell,
   inlineEditValue,
@@ -16,16 +18,33 @@ export default function ProfitListModal({
   handleSaveInlineEdit
 }) {
   if (!showProfitListModal) return null;
+  const isAfterAdsMode = mode === 'after_ads';
+
+  const adCostByOrder = new Map();
+  let totalAdSpend = 0;
+  (adCampaigns || []).forEach(campaign => {
+    const spend = Number(campaign.spend) || 0;
+    totalAdSpend += spend;
+    const orderIds = [...new Set(Array.isArray(campaign.order_ids) ? campaign.order_ids.map(String) : [])];
+    if (orderIds.length === 0) return;
+    const adCostPerOrder = spend / orderIds.length;
+    orderIds.forEach(orderId => {
+      adCostByOrder.set(orderId, (adCostByOrder.get(orderId) || 0) + adCostPerOrder);
+    });
+  });
+  const formatAmount = value => Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
   return (
     <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
-      <div className="relative bg-white rounded-lg max-w-4xl w-full shadow-2xl overflow-hidden border border-stone-200 animate-fadeIn">
+      <div className="relative bg-white rounded-lg max-w-5xl w-full shadow-2xl overflow-hidden border border-stone-200 animate-fadeIn">
         
         {/* Header */}
         <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
           <div>
             <span className="text-[9px] uppercase font-bold text-green-700 tracking-widest block">Financial Profitability</span>
-            <h3 className="text-sm font-bold text-stone-900">Net Profit Breakdown List</h3>
+            <h3 className="text-sm font-bold text-stone-900">
+              {isAfterAdsMode ? 'Profit After Ads: Order Breakdown' : 'Net Profit Breakdown List'}
+            </h3>
           </div>
           <button
             type="button"
@@ -39,7 +58,7 @@ export default function ProfitListModal({
         {/* Body */}
         <div className="p-6 overflow-y-auto max-h-[60vh] space-y-4">
           <div className="overflow-x-auto border border-stone-200 rounded">
-            <table className="w-full text-left text-xs border-collapse min-w-[650px]">
+            <table className="w-full text-left text-xs border-collapse min-w-212.5">
             <thead>
               <tr className="bg-stone-100 border-b border-stone-200 text-stone-500 uppercase tracking-wider font-bold">
                 <th className="p-3">Order ID</th>
@@ -47,12 +66,18 @@ export default function ProfitListModal({
                 <th className="p-3 text-right">Selling Price</th>
                 <th className="p-3 text-right">Base Cost</th>
                 <th className="p-3 text-right">Delivery Cost</th>
-                <th className="p-3 text-right">Net Profit</th>
+                <th className="p-3 text-right">{isAfterAdsMode ? 'Order Profit' : 'Net Profit'}</th>
+                {isAfterAdsMode && <>
+                  <th className="p-3 text-right">Ad Cost / Order</th>
+                  <th className="p-3 text-right">Final Profit</th>
+                </>}
               </tr>
             </thead>
             <tbody>
               {nonCancelledOrders.map(order => {
                 const { baseCost, deliveryCost, hasDeliveryCost, sellingPrice, profit } = calculateOrderProfit(order, products);
+                const adCost = adCostByOrder.get(String(order.id)) || 0;
+                const finalProfit = profit - adCost;
 
                 const isEditingSelling = inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'sellingPrice';
                 const isEditingBase = inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'baseCost';
@@ -175,6 +200,22 @@ export default function ProfitListModal({
                         </span>
                       )}
                     </td>
+                    {isAfterAdsMode && <>
+                      <td className="p-3 text-right font-semibold text-amber-700">
+                        - Rs. {formatAmount(adCost)}
+                      </td>
+                      <td className="p-3 text-right font-bold">
+                        {hasDeliveryCost ? (
+                          <span className={finalProfit >= 0 ? 'text-green-600' : 'text-red-650'}>
+                            Rs. {formatAmount(finalProfit)}
+                          </span>
+                        ) : (
+                          <span className="text-stone-450 italic font-normal" title="Final profit will calculate once delivery cost is set">
+                            Pending
+                          </span>
+                        )}
+                      </td>
+                    </>}
                   </tr>
                 );
               })}
@@ -188,7 +229,13 @@ export default function ProfitListModal({
           <div className="flex items-center gap-6">
             <span className="text-xs font-bold text-[#8c6239]">Total Sales: Rs. {calculatedSalesTotal}</span>
             <span className="text-xs font-bold text-purple-700">Total Delivery Cost: Rs. {calculatedDeliveryTotal}</span>
-            <span className="text-xs font-bold text-green-700">Total Net Profit: Rs. {calculatedProfitTotal}</span>
+            {isAfterAdsMode ? <>
+              <span className="text-xs font-bold text-stone-600">Profit Before Ads: Rs. {calculatedProfitTotal}</span>
+              <span className="text-xs font-bold text-amber-700">Ad Spend: Rs. {formatAmount(totalAdSpend)}</span>
+              <span className="text-xs font-bold text-green-700">Profit After Ads: Rs. {formatAmount(calculatedProfitTotal - totalAdSpend)}</span>
+            </> : (
+              <span className="text-xs font-bold text-green-700">Total Net Profit: Rs. {calculatedProfitTotal}</span>
+            )}
           </div>
           <button
             type="button"

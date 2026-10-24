@@ -14,7 +14,8 @@ import {
   calculateOrderProfit,
   formatDeliveryEstimate,
   isOrderInDateRange,
-  getDateRangeBounds
+  getDateRangeBounds,
+  isRtoOrder
 } from './utils/helpers';
 
 // Components
@@ -30,6 +31,7 @@ import LeadsView from './components/views/LeadsView';
 import BannersView from './components/views/BannersView';
 import BlogsView from './components/views/BlogsView';
 import TestimonialsView from './components/views/TestimonialsView';
+import ExpensesView from './components/views/ExpensesView';
 
 import OrderDetailsModal from './components/modals/OrderDetailsModal';
 import ShiprocketModal from './components/modals/ShiprocketModal';
@@ -55,10 +57,17 @@ export default function App() {
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
+  const latestOrdersRef = useRef([]);
+  const manualZipySyncInProgress = useRef(false);
+  const [syncingAutoZipyOrders, setSyncingAutoZipyOrders] = useState(false);
   const [banners, setBanners] = useState([]);
   const [blogs, setBlogs] = useState([]);
   const [testimonials, setTestimonials] = useState([]);
   const [leads, setLeads] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [expensesLoading, setExpensesLoading] = useState(false);
+  const [expensesTableMissing, setExpensesTableMissing] = useState(false);
+  const [expensesError, setExpensesError] = useState('');
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [leadsTableMissing, setLeadsTableMissing] = useState(false);
   const [showAdsModal, setShowAdsModal] = useState(false);
@@ -81,6 +90,7 @@ export default function App() {
   // Lists modals
   const [showSalesListModal, setShowSalesListModal] = useState(false);
   const [showProfitListModal, setShowProfitListModal] = useState(false);
+  const [profitListModalMode, setProfitListModalMode] = useState('normal');
   const [showDeliveredListModal, setShowDeliveredListModal] = useState(false);
   const [deliveredDateFilter, setDeliveredDateFilter] = useState('all');
   const [deliveredSearchQuery, setDeliveredSearchQuery] = useState('');
@@ -218,6 +228,8 @@ export default function App() {
   const [editingTestimonial, setEditingTestimonial] = useState(null);
   const [newTestimonial, setNewTestimonial] = useState({ name: '', role: '', text: '', image: '' });
 
+  latestOrdersRef.current = orders;
+
   useEffect(() => {
     checkSession();
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -327,7 +339,8 @@ export default function App() {
         fetchTestimonials(),
         fetchFinancialSummary(),
         fetchLeads(),
-        fetchAdCampaigns()
+        fetchAdCampaigns(),
+        fetchExpenses()
       ]);
     } catch (err) {
       console.error("Failed to load initial database content:", err);
@@ -343,7 +356,10 @@ export default function App() {
   };
 
   const calculateLocalFinancialSummary = (allOrders = orders) => {
-    const nonCancelled = (allOrders || []).filter(o => o.status !== 'Cancelled');
+    const nonCancelled = (allOrders || []).filter(o => {
+      const zipyStatus = String(o.shipment_details?.zipypost_status || '').toLowerCase().replace(/[_-]+/g, ' ');
+      return o.status !== 'Cancelled' && String(o.status || '').toLowerCase() !== 'rto' && !(/\brto\b|return to origin|returned to origin|return in transit|return initiated/.test(zipyStatus));
+    });
 
     const offlineOrders = nonCancelled.filter(o => {
       const pm = String(o.payment_method || '').toLowerCase();
@@ -472,13 +488,129 @@ export default function App() {
     if (data) setProducts(data);
   };
 
+  const fetchExpenses = async () => {
+    setExpensesLoading(true);
+    setExpensesError('');
+    try {
+      const { data, error } = await supabase.from('business_expenses').select('*').order('expense_date', { ascending: false }).order('created_at', { ascending: false });
+      if (error) throw error;
+      setExpenses(data || []);
+      setExpensesTableMissing(false);
+    } catch (err) {
+      const missingTable = err?.code === '42P01' || err?.code === 'PGRST205' || /business_expenses.*(not found|does not exist)|could not find the table/i.test(err?.message || '');
+      setExpensesTableMissing(missingTable);
+      setExpensesError(missingTable ? '' : err?.message || 'Could not load expenses.');
+      console.error('Failed to fetch expenses:', err);
+    } finally {
+      setExpensesLoading(false);
+    }
+  };
+
+  const saveExpense = async (expense) => {
+    setExpensesError('');
+    const { id, ...values } = expense;
+    const query = id
+      ? supabase.from('business_expenses').update({ ...values, updated_at: new Date().toISOString() }).eq('id', id).select().single()
+      : supabase.from('business_expenses').insert([values]).select().single();
+    const { data, error } = await query;
+    if (error) {
+      const missingTable = error.code === '42P01' || error.code === 'PGRST205';
+      setExpensesTableMissing(missingTable);
+      setExpensesError(missingTable ? '' : error.message || 'Could not save expense.');
+      return false;
+    }
+    setExpenses(prev => id ? prev.map(row => row.id === id ? data : row) : [data, ...prev]);
+    setExpensesTableMissing(false);
+    return true;
+  };
+
+  const deleteExpense = async (expense) => {
+    if (!window.confirm(`Delete expense “${expense.item}” (${expense.expense_date})?`)) return;
+    setExpensesError('');
+    const { error } = await supabase.from('business_expenses').delete().eq('id', expense.id);
+    if (error) {
+      setExpensesError(error.message || 'Could not delete expense.');
+      return;
+    }
+    setExpenses(prev => prev.filter(row => row.id !== expense.id));
+  };
+
   const fetchOrders = async () => {
     const { data } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
     if (data) {
       setOrders(data);
-      if (!financialSummary) {
-        setFinancialSummary(calculateLocalFinancialSummary(data));
-      }
+      setFinancialSummary(previous => previous || calculateLocalFinancialSummary(data));
+    }
+  };
+
+  const handleManualAutoZipySync = async () => {
+    if (manualZipySyncInProgress.current) {
+      alert('ZipyPost order sync is already running.');
+      return;
+    }
+
+    const activeOrders = latestOrdersRef.current.filter(order => {
+      const awb = order?.shipment_details?.zipypost_awb;
+      if (!awb) return false;
+      const hasRtoStarted = isRtoOrder(order);
+      const courierStatus = [
+        order?.shipment_details?.zipypost_status,
+        order?.shipment_details?.zipypost_tracking_info?.status,
+        order?.shipment_details?.zipypost_tracking_info?.tracking_status
+      ].filter(Boolean).join(' ').toLowerCase().replace(/[_-]+/g, ' ');
+      const currentStatus = `${String(order?.status || '').toLowerCase()} ${courierStatus}`;
+      if (/\bcancelled\b|\bcanceled\b/.test(currentStatus)) return false;
+      if (/\blost\b/.test(courierStatus)) return false;
+      const hasDeliveryException = /\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr|out for delivery)\b/.test(courierStatus);
+      const hasDeliveryDate = Boolean(order?.delivery_date || order?.shipment_details?.delivered_date || order?.shipment_details?.custom_delivery_date);
+      if (/\bdelivered\b/.test(courierStatus) && !hasRtoStarted && !hasDeliveryException && hasDeliveryDate) return false;
+      return true;
+    });
+    if (activeOrders.length === 0) {
+      alert('There are no active ZipyPost shipments to sync.');
+      return;
+    }
+
+    manualZipySyncInProgress.current = true;
+    setSyncingAutoZipyOrders(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error('Please log in again to sync ZipyPost orders.');
+
+      let nextIndex = 0;
+      let syncedCount = 0;
+      let failedCount = 0;
+      const worker = async () => {
+        while (nextIndex < activeOrders.length) {
+          const order = activeOrders[nextIndex++];
+          try {
+            const res = await fetch(`${API_BASE}/api/zipypost`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ action: 'sync_shipment', order_id: order.id })
+            });
+            if (res.ok) syncedCount += 1;
+            else {
+              failedCount += 1;
+              console.warn(`Manual ZipyPost sync skipped for order ${order.id}:`, await res.text());
+            }
+          } catch (err) {
+            failedCount += 1;
+            console.warn(`Manual ZipyPost sync failed for order ${order.id}:`, err);
+          }
+        }
+      };
+
+      await Promise.all(Array.from({ length: Math.min(3, activeOrders.length) }, () => worker()));
+      if (syncedCount > 0) await fetchOrders();
+      alert(`ZipyPost sync complete: ${syncedCount} of ${activeOrders.length} orders synced${failedCount ? `, ${failedCount} failed` : ''}.`);
+    } catch (err) {
+      console.warn('Manual ZipyPost sync failed:', err);
+      alert(`ZipyPost sync failed: ${err.message || 'Please try again.'}`);
+    } finally {
+      manualZipySyncInProgress.current = false;
+      setSyncingAutoZipyOrders(false);
     }
   };
 
@@ -1492,15 +1624,18 @@ export default function App() {
       await fetchOrders();
 
       if (selectedOrder && selectedOrder.id === order.id) {
-        setSelectedOrder(prev => ({
-          ...prev,
-          status: updatedOrder.status || prev.status,
-          shipment_details: {
-            ...(prev.shipment_details || {}),
-            zipypost_status: updatedOrder.zipypost_status,
-            zipypost_courier_name: updatedOrder.zipypost_courier_name
-          }
-        }));
+        setSelectedOrder(prev => {
+          if (!prev || prev.id !== order.id) return prev;
+          return {
+            ...prev,
+            status: updatedOrder.status || prev.status,
+            shipment_details: {
+              ...(prev.shipment_details || {}),
+              zipypost_status: updatedOrder.zipypost_status,
+              zipypost_courier_name: updatedOrder.zipypost_courier_name
+            }
+          };
+        });
       }
     } catch (err) {
       alert("ZipyPost Sync Error: " + err.message);
@@ -1851,6 +1986,16 @@ export default function App() {
   // Helper getters
   const getOrderStatus = (order) => {
     const s = String(order?.status || '').toLowerCase();
+    const courierStatus = [
+      order?.shipment_details?.zipypost_status,
+      order?.shipment_details?.zipypost_tracking_info?.status,
+      order?.shipment_details?.zipypost_tracking_info?.tracking_status,
+      order?.shipment_details?.shiprocket_status,
+      order?.zipypost_status,
+      order?.shiprocket_status
+    ].filter(Boolean).join(' ').toLowerCase().replace(/[_-]+/g, ' ');
+    if (isRtoOrder(order)) return 'RTO';
+    if (/\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr|out for delivery)\b/.test(courierStatus)) return 'Shipped';
     if (s === 'delivered') return 'Delivered';
     if (s === 'shipped') return 'Shipped';
     if (s === 'cancelled' || s === 'canceled') return 'Cancelled';
@@ -1858,25 +2003,36 @@ export default function App() {
   };
 
   const getOrderDeliveryDate = (order) => {
-    if (order?.delivery_date) {
-      return new Date(order.delivery_date);
-    }
     const sd = order?.shipment_details;
+    const getValidDate = (values) => {
+      for (const value of values) {
+        if (!value) continue;
+        const date = new Date(value);
+        if (!Number.isNaN(date.getTime())) return date;
+      }
+      return null;
+    };
+    const deliveryDate = getValidDate([
+      order?.delivery_date,
+      sd?.custom_delivery_date,
+      sd?.delivered_date,
+      sd?.zipypost_tracking_info?.delivered_date,
+      sd?.zipypost_tracking_info?.delivery_date,
+      sd?.zipypost_tracking_info?.delivered_at,
+      sd?.zipypost_tracking_info?.delivery_time,
+      sd?.last_webhook_payload?.delivered_date,
+      sd?.last_webhook_payload?.delivered_at
+    ]);
+    if (deliveryDate) return deliveryDate;
     if (Array.isArray(sd)) {
       for (let i = sd.length - 1; i >= 0; i--) {
         const item = sd[i];
-        if (item?.custom_delivery_date) return new Date(item.custom_delivery_date);
-        if (item?.last_webhook_payload?.delivered_date) return new Date(item.last_webhook_payload.delivered_date);
-        if (item?.delivered_date) return new Date(item.delivered_date);
-        if (item?.shipment_track?.[0]?.delivered_date) return new Date(item.shipment_track[0].delivered_date);
-        if (item?.tracking_data?.shipment_track?.[0]?.delivered_date) return new Date(item.tracking_data.shipment_track[0].delivered_date);
+        const date = getValidDate([item?.custom_delivery_date, item?.last_webhook_payload?.delivered_date, item?.delivered_date, item?.shipment_track?.[0]?.delivered_date, item?.tracking_data?.shipment_track?.[0]?.delivered_date]);
+        if (date) return date;
       }
     } else if (sd && typeof sd === 'object') {
-      if (sd.custom_delivery_date) return new Date(sd.custom_delivery_date);
-      if (sd.last_webhook_payload?.delivered_date) return new Date(sd.last_webhook_payload.delivered_date);
-      if (sd.delivered_date) return new Date(sd.delivered_date);
-      if (sd.shipment_track?.[0]?.delivered_date) return new Date(sd.shipment_track[0].delivered_date);
-      if (sd.tracking_data?.shipment_track?.[0]?.delivered_date) return new Date(sd.tracking_data.shipment_track[0].delivered_date);
+      const date = getValidDate([sd.shipment_track?.[0]?.delivered_date, sd.tracking_data?.shipment_track?.[0]?.delivered_date]);
+      if (date) return date;
     }
     return new Date(order?.created_at || Date.now());
   };
@@ -1906,15 +2062,17 @@ export default function App() {
   };
 
   // Financial & Order calculations
-  const nonCancelledOrders = orders.filter(o => getOrderStatus(o) !== 'Cancelled');
+  const nonCancelledOrders = orders.filter(o => !['Cancelled', 'RTO'].includes(getOrderStatus(o)));
   const allDeliveredOrders = orders.filter(o => getOrderStatus(o) === 'Delivered');
+  const allRtoOrders = orders.filter(o => getOrderStatus(o) === 'RTO');
 
   const orderStatusCounts = {
     All: orders.length,
     Processing: orders.filter(o => getOrderStatus(o) === 'Processing').length,
     Shipped: orders.filter(o => getOrderStatus(o) === 'Shipped').length,
     Delivered: allDeliveredOrders.length,
-    Cancelled: orders.filter(o => getOrderStatus(o) === 'Cancelled').length
+    Cancelled: orders.filter(o => getOrderStatus(o) === 'Cancelled').length,
+    RTO: allRtoOrders.length
   };
 
   const deliveredCounts = {
@@ -1950,7 +2108,7 @@ export default function App() {
   const dashboardOrders = isDashboardDateFiltered 
     ? orders.filter(o => isOrderInDateRange(o, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd))
     : orders;
-  const dashboardNonCancelledOrders = dashboardOrders.filter(o => getOrderStatus(o) !== 'Cancelled');
+  const dashboardNonCancelledOrders = dashboardOrders.filter(o => !['Cancelled', 'RTO'].includes(getOrderStatus(o)));
   const dashboardDeliveredOrders = dashboardOrders.filter(o => getOrderStatus(o) === 'Delivered');
 
   const dashboardOrderStatusCounts = {
@@ -1958,7 +2116,8 @@ export default function App() {
     Processing: dashboardOrders.filter(o => getOrderStatus(o) === 'Processing' || o.status === 'Placed').length,
     Shipped: dashboardOrders.filter(o => getOrderStatus(o) === 'Shipped').length,
     Delivered: dashboardDeliveredOrders.length,
-    Cancelled: dashboardOrders.filter(o => getOrderStatus(o) === 'Cancelled').length
+    Cancelled: dashboardOrders.filter(o => getOrderStatus(o) === 'Cancelled').length,
+    RTO: dashboardOrders.filter(o => getOrderStatus(o) === 'RTO').length
   };
 
   const dashboardCalculatedSalesTotal = Number(dashboardNonCancelledOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0).toFixed(2));
@@ -1988,7 +2147,7 @@ export default function App() {
     return true;
   });
 
-  const orderStatusFilters = ['All', 'Processing', 'Shipped', 'Delivered', 'Cancelled'];
+  const orderStatusFilters = ['All', 'Processing', 'Shipped', 'Delivered', 'RTO', 'Cancelled'];
 
   if (authLoading && !user) {
     return (
@@ -2070,11 +2229,14 @@ export default function App() {
                 setShowSalesListModal={setShowSalesListModal}
                 calculatedDeliveryTotal={dashboardCalculatedDeliveryTotal}
                 setShowProfitListModal={setShowProfitListModal}
+                setProfitListModalMode={setProfitListModalMode}
                 calculatedProfitTotal={dashboardCalculatedProfitTotal}
                 financialSummary={financialSummary}
                 loadingFinancials={loadingFinancials}
                 refreshAdminData={fetchDatabaseData}
                 setShowFinancialModal={setShowFinancialModal}
+                onSyncZipyOrders={handleManualAutoZipySync}
+                syncingZipyOrders={syncingAutoZipyOrders}
                 setShowManualOrderModal={setShowManualOrderModal}
                 products={products}
                 orders={dashboardOrders}
@@ -2156,6 +2318,18 @@ export default function App() {
                 setSelectedOrder={setSelectedOrder}
                 sentMessages={sentMessages}
                 requestOrderStatusUpdate={requestOrderStatusUpdate}
+              />
+            )}
+
+            {activeTab === 'expenses' && (
+              <ExpensesView
+                expenses={expenses}
+                loading={expensesLoading}
+                tableMissing={expensesTableMissing}
+                error={expensesError}
+                onRefresh={fetchExpenses}
+                onSave={saveExpense}
+                onDelete={deleteExpense}
               />
             )}
 
@@ -2333,11 +2507,13 @@ export default function App() {
       <ProfitListModal
         showProfitListModal={showProfitListModal}
         setShowProfitListModal={setShowProfitListModal}
+        mode={profitListModalMode}
         nonCancelledOrders={dashboardNonCancelledOrders}
         products={products}
         calculatedSalesTotal={dashboardCalculatedSalesTotal}
         calculatedDeliveryTotal={dashboardCalculatedDeliveryTotal}
         calculatedProfitTotal={dashboardCalculatedProfitTotal}
+        adCampaigns={adCampaigns}
         inlineEditingCell={inlineEditingCell}
         setInlineEditingCell={setInlineEditingCell}
         inlineEditValue={inlineEditValue}
@@ -2406,6 +2582,7 @@ export default function App() {
           deleteAdCampaign={deleteAdCampaign}
           orders={orders}
           products={products}
+          financialSummary={financialSummary}
         />
       )}
     </div>

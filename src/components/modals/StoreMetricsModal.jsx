@@ -11,7 +11,7 @@ import {
   FiCreditCard,
   FiXCircle
 } from 'react-icons/fi';
-import { calculateOrderProfit } from '../../utils/helpers';
+import { calculateOrderProfit, getCurrentCourierStatusText, isRtoOrder } from '../../utils/helpers';
 
 export default function StoreMetricsModal({
   isOpen,
@@ -33,7 +33,10 @@ export default function StoreMetricsModal({
 
   // Non-cancelled orders helper
   const nonCancelledOrders = useMemo(() => {
-    return (orders || []).filter(o => o.status !== 'Cancelled');
+    return (orders || []).filter(o => {
+      const zipyStatus = String(o.shipment_details?.zipypost_status || '').toLowerCase().replace(/[_-]+/g, ' ');
+      return o.status !== 'Cancelled' && String(o.status || '').toLowerCase() !== 'rto' && !(/\brto\b|return to origin|returned to origin|return in transit|return initiated/.test(zipyStatus));
+    });
   }, [orders]);
 
   // Offline orders
@@ -75,6 +78,19 @@ export default function StoreMetricsModal({
   // Cancelled orders
   const cancelledOrders = useMemo(() => {
     return (orders || []).filter(o => o.status === 'Cancelled');
+  }, [orders]);
+
+  const getRtoStage = (order) => {
+    const statusText = getCurrentCourierStatusText(order);
+    if (/\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr|out for delivery)\b/.test(statusText)) return 'other';
+    if (/\b(?:rto|return|returned)\b.*\bdelivered\b|\bdelivered\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'delivered';
+    if (/\b(?:rto|return|returned)\b.*\bin transit\b|\bin transit\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'in_transit';
+    if (/\brto notified\b|\breturn notified\b/.test(statusText)) return 'in_transit';
+    return 'other';
+  };
+
+  const rtoOrders = useMemo(() => {
+    return (orders || []).filter(isRtoOrder);
   }, [orders]);
 
   // Razorpay settlements list
@@ -160,11 +176,26 @@ export default function StoreMetricsModal({
     modalSubtitle = `List of all cancelled customer orders (${cancelledOrders.length} Orders)`;
     icon = <FiXCircle className="text-rose-700" size={18} />;
     iconBg = 'bg-rose-100 border-rose-200';
+  } else if (modalType === 'rto_orders') {
+    modalTitle = 'RTO Orders & ZipyPost Billing';
+    modalSubtitle = `Returned shipments with per-AWB net charges (${rtoOrders.length} Orders)`;
+    icon = <FiTruck className="text-orange-700" size={18} />;
+    iconBg = 'bg-orange-100 border-orange-200';
+  } else if (modalType === 'rto_in_transit') {
+    modalTitle = 'RTO In Transit Orders';
+    modalSubtitle = `Returned shipments currently in courier transit (${rtoOrders.filter(order => getRtoStage(order) === 'in_transit').length} Orders)`;
+    icon = <FiTruck className="text-amber-700" size={18} />;
+    iconBg = 'bg-amber-100 border-amber-200';
+  } else if (modalType === 'rto_delivered') {
+    modalTitle = 'RTO Delivered Orders';
+    modalSubtitle = `Returned shipments delivered back to sender (${rtoOrders.filter(order => getRtoStage(order) === 'delivered').length} Orders)`;
+    icon = <FiCheckCircle className="text-emerald-700" size={18} />;
+    iconBg = 'bg-emerald-100 border-emerald-200';
   }
 
   return (
     <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
-      <div className="relative bg-white rounded-lg max-w-5xl w-full shadow-2xl overflow-hidden border border-stone-200 animate-fadeIn flex flex-col max-h-[90vh]">
+      <div className="relative bg-white rounded-lg max-w-6xl w-full shadow-2xl overflow-hidden border border-stone-200 animate-fadeIn flex flex-col max-h-[90vh]">
         
         {/* Header */}
         <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50 shrink-0">
@@ -230,7 +261,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[600px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-150">
                     <thead>
                       <tr className="bg-stone-100 border-b border-stone-200 text-stone-600 uppercase tracking-wider font-bold text-[9px]">
                         <th className="p-3">Order ID</th>
@@ -328,7 +359,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[750px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-187.5">
                     <thead>
                       <tr className="bg-emerald-100/70 text-emerald-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Order ID</th>
@@ -360,7 +391,7 @@ export default function StoreMetricsModal({
                                 <div>{order.customer_name}</div>
                                 <div className="text-[10px] text-stone-400 font-mono">{order.phone || ''}</div>
                               </td>
-                              <td className="p-3 text-stone-600 text-[11px] max-w-[200px] truncate" title={itemsSummary}>
+                              <td className="p-3 text-stone-600 text-[11px] max-w-50 truncate" title={itemsSummary}>
                                 {itemsSummary}
                               </td>
                               <td className="p-3 text-right font-medium text-stone-800">₹ {sellingPrice.toLocaleString('en-IN')}</td>
@@ -471,7 +502,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-stone-100 border-b border-stone-200 text-stone-600 uppercase tracking-wider font-bold text-[9px]">
                         <th className="p-3">Order ID</th>
@@ -602,7 +633,7 @@ export default function StoreMetricsModal({
                       }`}
                     >
                       Offline Cash ({offlineOrders.length})
-                    </button>
+                    </button>min-w-200
                     <button
                       onClick={() => setActiveTab('courier')}
                       className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all ${
@@ -626,7 +657,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[800px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-200">
                     <thead>
                       <tr className="bg-amber-100/70 text-amber-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Order ID</th>
@@ -737,7 +768,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-blue-100/70 text-blue-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Order ID</th>
@@ -769,7 +800,7 @@ export default function StoreMetricsModal({
                                 <div>{order.customer_name}</div>
                                 <div className="text-[10px] text-stone-400 font-mono">{order.phone || ''}</div>
                               </td>
-                              <td className="p-3 text-stone-600 text-[10px] font-mono max-w-[200px] truncate" title={order.payment_method}>
+                              <td className="p-3 text-stone-600 text-[10px] font-mono max-w-50 truncate" title={order.payment_method}>
                                 {order.payment_method || 'Razorpay Prepaid'}
                               </td>
                               <td className="p-3 text-stone-600">
@@ -856,7 +887,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[750px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-187.5">
                     <thead>
                       <tr className="bg-blue-100/70 text-blue-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Order ID</th>
@@ -966,7 +997,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[650px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-162.5">
                     <thead>
                       <tr className="bg-blue-100/60 text-blue-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Settlement ID</th>
@@ -1028,7 +1059,7 @@ export default function StoreMetricsModal({
 
                 {razorpayPendingItems.length > 0 ? (
                   <div className="overflow-x-auto border border-stone-200 rounded">
-                    <table className="w-full text-left text-xs border-collapse min-w-[600px]">
+                    <table className="w-full text-left text-xs border-collapse min-w-150">
                       <thead>
                         <tr className="bg-sky-100/60 text-sky-950 font-bold uppercase text-[9px] tracking-wider">
                           <th className="p-3">Payment ID</th>
@@ -1155,7 +1186,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-purple-100/60 text-purple-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Partner</th>
@@ -1295,7 +1326,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-purple-100/60 text-purple-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Partner</th>
@@ -1401,7 +1432,7 @@ export default function StoreMetricsModal({
 
                 {/* Table */}
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-rose-100/60 text-rose-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Order ID</th>
@@ -1438,7 +1469,7 @@ export default function StoreMetricsModal({
                                   {order.payment_method || 'N/A'}
                                 </span>
                               </td>
-                              <td className="p-3 max-w-[200px] truncate text-[11px] text-stone-600" title={itemsSummary}>
+                              <td className="p-3 max-w-50 truncate text-[11px] text-stone-600" title={itemsSummary}>
                                 {itemsSummary || '—'}
                               </td>
                               <td className="p-3">
@@ -1466,6 +1497,149 @@ export default function StoreMetricsModal({
                         <tr>
                           <td colSpan={8} className="p-6 text-center text-stone-400 italic">No cancelled orders matching query.</td>
                         </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+
+          {['rto_orders', 'rto_in_transit', 'rto_delivered'].includes(modalType) && (() => {
+            const q = searchQuery.toLowerCase().trim();
+            const chargesByAwb = financialSummary?.zipypost?.rto_charges_by_awb || {};
+            const formatMoney = (amount) => Number(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const stageFilteredOrders = modalType === 'rto_in_transit'
+              ? rtoOrders.filter(order => getRtoStage(order) === 'in_transit')
+              : modalType === 'rto_delivered'
+                ? rtoOrders.filter(order => getRtoStage(order) === 'delivered')
+                : rtoOrders;
+            const filtered = stageFilteredOrders.filter(order => {
+              const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || '';
+              return [order.id, order.customer_name, order.phone, order.city, order.state, order.pincode, awb]
+                .some(value => String(value || '').toLowerCase().includes(q));
+            });
+            const getLedgerCharge = (order) => {
+              const awb = String(order.shipment_details?.zipypost_awb || order.zipypost_awb || '').trim().toUpperCase();
+              return awb ? chargesByAwb[awb] || null : null;
+            };
+            const billedOrders = filtered.filter(order => getLedgerCharge(order)?.net_charge !== null && getLedgerCharge(order)?.net_charge !== undefined);
+            const pendingOrders = filtered.filter(order => !billedOrders.includes(order));
+            const totalOrderValue = filtered.reduce((sum, order) => sum + (parseFloat(order.total_amount) || 0), 0);
+            const totalNetBilled = billedOrders.reduce((sum, order) => sum + Number(getLedgerCharge(order).net_charge || 0), 0);
+            const pendingChargeEstimate = pendingOrders.reduce((sum, order) => {
+              const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(order, products);
+              return sum + (hasDeliveryCost ? deliveryCost : 0);
+            }, 0);
+
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                  <div className="bg-orange-50 border border-orange-200 p-3.5 rounded">
+                    <span className="text-[10px] uppercase font-bold text-orange-700 tracking-wider block">RTO Orders</span>
+                    <h4 className="text-xl font-bold text-orange-900 mt-1">{filtered.length}</h4>
+                  </div>
+                  <div className="bg-stone-50 border border-stone-200 p-3.5 rounded">
+                    <span className="text-[10px] uppercase font-bold text-stone-600 tracking-wider block">Order Value</span>
+                    <h4 className="text-xl font-bold text-stone-800 mt-1">₹ {totalOrderValue.toLocaleString('en-IN')}</h4>
+                  </div>
+                  <div className="bg-rose-50 border border-rose-200 p-3.5 rounded">
+                    <span className="text-[10px] uppercase font-bold text-rose-700 tracking-wider block">Actual Net Courier Charges</span>
+                    <h4 className="text-xl font-bold text-rose-900 mt-1">₹ {formatMoney(totalNetBilled)}</h4>
+                    <p className="text-[10px] text-rose-600">RTO + forward charges − ledger credits/reversals</p>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 p-3.5 rounded">
+                    <span className="text-[10px] uppercase font-bold text-amber-700 tracking-wider block">Ledger Pending</span>
+                    <h4 className="text-xl font-bold text-amber-900 mt-1">{pendingOrders.length} orders</h4>
+                    <p className="text-[10px] text-amber-700">Saved freight estimate: ₹ {formatMoney(pendingChargeEstimate)}</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
+                  <div className="text-[10px] text-orange-800 bg-orange-50 border border-orange-200 rounded px-3 py-2 w-full sm:w-auto">
+                    <p>Net billed amount comes from Zipypost's AWB ledger. Forward and RTO freight/GST are counted; the COD charge and RTO reversal cancel each other. Pending entries show only the saved freight estimate.</p>
+                    {financialSummary?.zipypost?.rto_charges_error && <p className="mt-1 font-semibold text-rose-700">Ledger sync error: {financialSummary.zipypost.rto_charges_error}</p>}
+                  </div>
+                  <div className="relative grow sm:max-w-xs w-full">
+                    <FiSearch className="absolute left-3 top-2.5 text-stone-400" size={14} />
+                    <input
+                      type="text"
+                      placeholder="Search order, customer, city, AWB..."
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 bg-stone-50 border border-stone-200 rounded text-xs text-stone-800 placeholder-stone-400 focus:outline-none focus:border-orange-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto border border-stone-200 rounded">
+                  <table className="w-full text-left text-xs border-collapse min-w-[1600px]">
+                    <thead>
+                      <tr className="bg-orange-100/70 text-orange-950 font-bold uppercase text-[9px] tracking-wider">
+                        <th className="p-3">Order / Date</th>
+                        <th className="p-3">Customer</th>
+                        <th className="p-3">Delivery Location</th>
+                        <th className="p-3">Items</th>
+                        <th className="p-3">Zipypost / AWB</th>
+                        <th className="p-3">Payment</th>
+                        <th className="p-3 text-right">Order Value</th>
+                        <th className="p-3 text-right">Forward</th>
+                        <th className="p-3 text-right">COD</th>
+                        <th className="p-3 text-right">RTO Charge</th>
+                        <th className="p-3 text-right">GST</th>
+                        <th className="p-3 text-right">COD Reversal</th>
+                        <th className="p-3 text-right">Net Billed</th>
+                        <th className="p-3 text-center">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-orange-50">
+                      {filtered.length ? filtered.map((order, idx) => {
+                        const items = (order.items || []).map(item => `${item.product?.name || 'Product'} (${item.selectedSize || 'Size N/A'} ×${item.quantity || 1})`).join(', ');
+                        const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || 'N/A';
+                        const courierStatus = order.shipment_details?.zipypost_status || order.status || 'RTO';
+                        const ledger = getLedgerCharge(order);
+                        const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(order, products);
+                        const address = [order.city, order.state, order.pincode].filter(Boolean).join(', ');
+                        const codReversal = Number(ledger?.cod_reversal || 0) || (Number(ledger?.cod_charge || 0) > 0 ? Number(ledger.cod_charge) : 0);
+
+                        return (
+                          <tr key={order.id || idx} className="hover:bg-orange-50/40 transition-colors">
+                            <td className="p-3">
+                              <span className="font-mono font-bold text-stone-900 block">{order.id || 'N/A'}</span>
+                              <span className="text-[10px] text-stone-400">{order.created_at ? new Date(order.created_at).toLocaleDateString('en-IN') : 'N/A'}</span>
+                            </td>
+                            <td className="p-3">
+                              <div className="font-semibold text-stone-800">{order.customer_name || 'Customer'}</div>
+                              <div className="text-[10px] text-stone-500 font-mono">{order.phone || 'No phone'}</div>
+                            </td>
+                            <td className="p-3 text-stone-700 max-w-45">
+                              <div>{address || order.address || 'Location unavailable'}</div>
+                              {order.address && address && <div className="text-[10px] text-stone-400 truncate" title={order.address}>{order.address}</div>}
+                            </td>
+                            <td className="p-3 max-w-30 truncate text-[11px] text-stone-600" title={items}>{items || '—'}</td>
+                            <td className="p-3">
+                              <span className="block text-[10px] font-semibold text-orange-800">{courierStatus}</span>
+                              <span className="font-mono text-[10px] text-stone-500">{awb}</span>
+                            </td>
+                            <td className="p-3 text-[10px] text-stone-600">{order.payment_method || 'N/A'}</td>
+                            <td className="p-3 text-right font-semibold text-stone-800">₹ {Number(order.total_amount || 0).toLocaleString('en-IN')}</td>
+                            <td className="p-3 text-right">{ledger?.forward_charge !== null && ledger?.forward_charge !== undefined ? `₹ ${formatMoney(ledger.forward_charge)}` : '—'}</td>
+                            <td className="p-3 text-right">{ledger?.cod_charge !== null && ledger?.cod_charge !== undefined ? `₹ ${formatMoney(ledger.cod_charge)}` : '—'}</td>
+                            <td className="p-3 text-right font-semibold text-orange-800">{ledger?.rto_charge !== null && ledger?.rto_charge !== undefined ? `₹ ${formatMoney(ledger.rto_charge)}` : '—'}</td>
+                            <td className="p-3 text-right">{ledger?.gst ? `₹ ${formatMoney(ledger.gst)}` : '—'}</td>
+                            <td className="p-3 text-right text-emerald-700">{codReversal ? `−₹ ${formatMoney(Math.abs(codReversal))}` : '—'}</td>
+                            <td className="p-3 text-right font-bold text-rose-700">{ledger?.net_charge !== null && ledger?.net_charge !== undefined ? `₹ ${formatMoney(ledger.net_charge)}` : (hasDeliveryCost ? `Est. ₹ ${formatMoney(deliveryCost)}` : 'Pending')}</td>
+                            <td className="p-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedOrder && setSelectedOrder(order)}
+                                className="text-[10px] font-bold text-stone-700 hover:text-stone-900 border border-stone-200 bg-white hover:bg-stone-50 px-2 py-1 rounded cursor-pointer transition-colors"
+                              >Details</button>
+                            </td>
+                          </tr>
+                        );
+                      }) : (
+                        <tr><td colSpan={14} className="p-6 text-center text-stone-400 italic">No RTO orders match this search.</td></tr>
                       )}
                     </tbody>
                   </table>

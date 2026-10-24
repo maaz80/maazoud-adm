@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+﻿import React, { useState, useMemo } from 'react';
 import {
   FiDollarSign,
   FiTrendingUp,
@@ -28,7 +28,8 @@ export default function AdsManagerModal({
   saveAdCampaign,
   deleteAdCampaign,
   orders = [],
-  products = []
+  products = [],
+  financialSummary
 }) {
   const [activeView, setActiveView] = useState('list'); // 'list' | 'form'
   const [editingCampaignId, setEditingCampaignId] = useState(null);
@@ -57,6 +58,22 @@ export default function AdsManagerModal({
     validOrders.forEach(o => map.set(o.id, o));
     return map;
   }, [validOrders]);
+
+  const getRtoInfo = (order) => {
+    const courierStatus = String(order?.shipment_details?.zipypost_status || '').toLowerCase().replace(/[_-]+/g, ' ');
+    const isRto = String(order?.status || '').toLowerCase() === 'rto'
+      || /\brto\b|return to origin|returned to origin|return in transit|return initiated/.test(courierStatus);
+    if (!isRto) return { isRto: false, charge: null, isEstimate: false };
+
+    const awb = String(order?.shipment_details?.zipypost_awb || order?.zipypost_awb || '').trim().toUpperCase();
+    const ledger = awb ? financialSummary?.zipypost?.rto_charges_by_awb?.[awb] : null;
+    if (ledger?.net_charge !== null && ledger?.net_charge !== undefined && Number.isFinite(Number(ledger.net_charge))) {
+      return { isRto: true, charge: Number(ledger.net_charge), isEstimate: false };
+    }
+
+    const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(order, products);
+    return { isRto: true, charge: hasDeliveryCost ? deliveryCost : null, isEstimate: hasDeliveryCost };
+  };
 
   // Reset form
   const resetForm = () => {
@@ -136,10 +153,16 @@ export default function AdsManagerModal({
       const order = orderMap.get(orderId);
       if (order) {
         const profitDetails = calculateOrderProfit(order, products);
-        totalRevenue += profitDetails.sellingPrice || 0;
-        totalBaseCost += profitDetails.baseCost || 0;
-        totalDeliveryCost += profitDetails.deliveryCost || 0;
-        totalOrderProfit += profitDetails.profit || 0;
+        const rtoInfo = getRtoInfo(order);
+        if (rtoInfo.isRto) {
+          totalDeliveryCost += rtoInfo.charge || 0;
+          totalOrderProfit -= rtoInfo.charge || 0;
+        } else {
+          totalRevenue += profitDetails.sellingPrice || 0;
+          totalBaseCost += profitDetails.baseCost || 0;
+          totalDeliveryCost += profitDetails.deliveryCost || 0;
+          totalOrderProfit += profitDetails.profit || 0;
+        }
       }
     });
 
@@ -155,12 +178,12 @@ export default function AdsManagerModal({
       netProfitLoss,
       roas
     };
-  }, [selectedOrderIds, spend, orderMap, products]);
+  }, [selectedOrderIds, spend, orderMap, products, financialSummary]);
 
   // Compute metrics for a specific campaign in the list
   const getCampaignMetrics = (campaign) => {
     const numSpend = Number(campaign.spend) || 0;
-    const cOrderIds = Array.isArray(campaign.order_ids) ? campaign.order_ids : [];
+    const cOrderIds = [...new Set(Array.isArray(campaign.order_ids) ? campaign.order_ids : [])];
     let totalRevenue = 0;
     let totalOrderProfit = 0;
     let totalDeliveryCost = 0;
@@ -169,21 +192,29 @@ export default function AdsManagerModal({
       const order = orderMap.get(orderId);
       if (order) {
         const profitDetails = calculateOrderProfit(order, products);
-        totalRevenue += profitDetails.sellingPrice || 0;
-        totalOrderProfit += profitDetails.profit || 0;
-        totalDeliveryCost += profitDetails.deliveryCost || 0;
+        const rtoInfo = getRtoInfo(order);
+        if (rtoInfo.isRto) {
+          totalOrderProfit -= rtoInfo.charge || 0;
+          totalDeliveryCost += rtoInfo.charge || 0;
+        } else {
+          totalRevenue += profitDetails.sellingPrice || 0;
+          totalOrderProfit += profitDetails.profit || 0;
+          totalDeliveryCost += profitDetails.deliveryCost || 0;
+        }
       }
     });
 
     const totalSpend = numSpend + totalDeliveryCost;
     const netProfitLoss = totalOrderProfit - numSpend;
     const roas = numSpend > 0 ? (totalRevenue / numSpend) : 0;
+    const adCostPerOrder = cOrderIds.length > 0 ? numSpend / cOrderIds.length : 0;
 
     return {
       numSpend,
       totalDeliveryCost,
       totalSpend,
       ordersCount: cOrderIds.length,
+      adCostPerOrder,
       totalRevenue,
       totalOrderProfit,
       netProfitLoss,
@@ -222,7 +253,7 @@ export default function AdsManagerModal({
       uniqueOrdersCount: uniqueOrderIds.size,
       overallRoas
     };
-  }, [adCampaigns, orderMap, products]);
+  }, [adCampaigns, orderMap, products, financialSummary]);
 
   if (!showAdsModal) return null;
 
@@ -454,7 +485,7 @@ export default function AdsManagerModal({
                                     </span>
                                     {m.ordersCount > 0 ? (
                                       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                        {(campaign.order_ids || []).map(orderId => {
+                                        {([...new Set(campaign.order_ids || [])]).map(orderId => {
                                           const order = orderMap.get(orderId);
                                           if (!order) {
                                             return (
@@ -464,18 +495,38 @@ export default function AdsManagerModal({
                                             );
                                           }
                                           const orderProfit = calculateOrderProfit(order, products);
+                                          const rtoInfo = getRtoInfo(order);
+                                          const profitBeforeAds = rtoInfo.isRto
+                                            ? (rtoInfo.charge === null ? null : -rtoInfo.charge)
+                                            : Number(orderProfit.profit) || 0;
+                                          const finalProfit = profitBeforeAds === null ? null : profitBeforeAds - m.adCostPerOrder;
 
                                           return (
-                                            <div key={orderId} className="p-2 bg-white border border-stone-200 rounded flex justify-between items-center text-[11px] shadow-2xs">
+                                            <div key={orderId} className="p-2 bg-white border border-stone-200 rounded text-[11px] shadow-2xs">
                                               <div>
                                                 <span className="font-bold text-stone-800 block">{order.id}</span>
                                                 <span className="text-[10px] text-stone-500 truncate block max-w-[120px]">{order.customer_name}</span>
+                                                {rtoInfo.isRto && (
+                                                  <span className="mt-1 inline-block rounded bg-orange-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-orange-800">RTO</span>
+                                                )}
                                               </div>
-                                              <div className="text-right">
-                                                <span className="font-bold text-stone-900 block">₹ {order.total_amount}</span>
-                                                <span className="text-[10px] font-semibold text-green-700 block">
-                                                  +₹ {formatCurrency(orderProfit.profit)} profit
-                                                </span>
+                                              <div className="mt-2 grid grid-cols-3 gap-2 text-right">
+                                                <div>
+                                                  <span className="text-[9px] text-stone-500 block">{rtoInfo.isRto ? (rtoInfo.isEstimate ? 'Est. RTO Loss' : 'RTO Loss') : 'Order Profit'}</span>
+                                                  <span className={`font-semibold ${rtoInfo.isRto ? 'text-rose-700' : 'text-stone-700'}`}>
+                                                    {profitBeforeAds === null ? 'Pending' : `${profitBeforeAds < 0 ? '- ' : ''}₹${formatCurrency(Math.abs(profitBeforeAds))}`}
+                                                  </span>
+                                                </div>
+                                                <div>
+                                                  <span className="text-[9px] text-stone-500 block">Ad Cost / Order</span>
+                                                  <span className="font-semibold text-amber-700">− {'₹'}{formatCurrency(m.adCostPerOrder)}</span>
+                                                </div>
+                                                <div>
+                                                  <span className="text-[9px] text-stone-500 block">Final Profit</span>
+                                                  <span className={`font-bold ${finalProfit === null ? 'text-stone-500' : finalProfit >= 0 ? 'text-green-700' : 'text-rose-700'}`}>
+                                                    {finalProfit === null ? 'Pending RTO charge' : `${finalProfit < 0 ? '- ' : ''}₹${formatCurrency(Math.abs(finalProfit))}`}
+                                                  </span>
+                                                </div>
                                               </div>
                                             </div>
                                           );

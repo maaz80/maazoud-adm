@@ -9,7 +9,8 @@ import {
   FiImage,
   FiStar,
   FiUsers,
-  FiX
+  FiX,
+  FiDollarSign
 } from 'react-icons/fi';
 
 export default function Sidebar({ activeTab, setActiveTab, user, handleLogout, mobileMenuOpen, setMobileMenuOpen, leadsCount = 0 }) {
@@ -18,6 +19,7 @@ export default function Sidebar({ activeTab, setActiveTab, user, handleLogout, m
     { id: 'categories', name: 'Categories', icon: <FiFolder size={18} /> },
     { id: 'products', name: 'Products Catalog', icon: <FiShoppingBag size={18} /> },
     { id: 'orders', name: 'Orders Listing', icon: <FiPackage size={18} /> },
+    { id: 'expenses', name: 'Expenses', icon: <FiDollarSign size={18} /> },
     { id: 'leads', name: 'Abandoned Leads', icon: <FiUsers size={18} />, badge: leadsCount },
     { id: 'banners', name: 'Promotion Banners', icon: <FiImage size={18} /> },
     { id: 'blogs', name: 'Manage Blogs', icon: <FiList size={18} /> },

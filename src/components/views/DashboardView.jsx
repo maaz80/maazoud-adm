@@ -16,7 +16,7 @@ import {
   FiCalendar,
   FiTarget
 } from 'react-icons/fi';
-import { calculateOrderProfit, isOrderInDateRange } from '../../utils/helpers';
+import { calculateOrderProfit, isOrderInDateRange, getCurrentCourierStatusText, isRtoOrder } from '../../utils/helpers';
 import StoreMetricsModal from '../modals/StoreMetricsModal';
 
 const formatApprox = (val) => Math.round(parseFloat(val) || 0).toLocaleString('en-IN');
@@ -33,10 +33,13 @@ export default function DashboardView({
   setShowSalesListModal,
   calculatedDeliveryTotal,
   setShowProfitListModal,
+  setProfitListModalMode,
   calculatedProfitTotal,
   financialSummary,
   loadingFinancials,
   refreshAdminData,
+  onSyncZipyOrders,
+  syncingZipyOrders = false,
   setShowFinancialModal,
   setShowManualOrderModal,
   products = [],
@@ -132,7 +135,31 @@ export default function DashboardView({
   if (activeTab !== 'dashboard') return null;
 
   // --- Dynamic Razorpay & Payout Calculations ---
-  const nonCancelledOrders = (orders || []).filter(o => o.status !== 'Cancelled');
+  const rtoOrders = (orders || []).filter(isRtoOrder);
+  const getRtoStage = (order) => {
+    const statusText = getCurrentCourierStatusText(order);
+    if (/\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr|out for delivery)\b/.test(statusText)) return 'other';
+    if (/\b(?:rto|return|returned)\b.*\bdelivered\b|\bdelivered\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'delivered';
+    if (/\b(?:rto|return|returned)\b.*\bin transit\b|\bin transit\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'in_transit';
+    if (/\brto notified\b|\breturn notified\b/.test(statusText)) return 'in_transit';
+    return 'other';
+  };
+  const rtoInTransitOrders = rtoOrders.filter(order => getRtoStage(order) === 'in_transit');
+  const rtoDeliveredOrders = rtoOrders.filter(order => getRtoStage(order) === 'delivered');
+  const nonCancelledOrders = (orders || []).filter(o => o.status !== 'Cancelled' && !rtoOrders.some(rto => rto.id === o.id));
+  const zipypostRtoCharges = financialSummary?.zipypost?.rto_charges_by_awb || {};
+  const getRtoLedgerCharge = (order) => {
+    const awb = String(order.shipment_details?.zipypost_awb || order.zipypost_awb || '').trim().toUpperCase();
+    return awb ? zipypostRtoCharges[awb] || null : null;
+  };
+  const rtoBilledOrders = rtoOrders.filter(order => getRtoLedgerCharge(order)?.net_charge !== null && getRtoLedgerCharge(order)?.net_charge !== undefined);
+  const rtoPendingOrders = rtoOrders.filter(order => !rtoBilledOrders.includes(order));
+  const rtoLossActual = rtoBilledOrders.reduce((sum, order) => sum + Number(getRtoLedgerCharge(order).net_charge || 0), 0);
+  const rtoPendingEstimate = rtoPendingOrders.reduce((sum, order) => {
+    const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(order, products);
+    return sum + (hasDeliveryCost ? deliveryCost : 0);
+  }, 0);
+  const rtoLedgerLoaded = Boolean(financialSummary?.zipypost?.rto_charges_connected);
 
   const prepaidOrders = nonCancelledOrders.filter(o => {
     const pm = String(o.payment_method || '').toLowerCase();
@@ -357,6 +384,17 @@ export default function DashboardView({
           )}
 
           <button
+            type="button"
+            onClick={onSyncZipyOrders}
+            disabled={syncingZipyOrders}
+            className="bg-white hover:bg-sky-50 text-sky-800 border border-sky-200 disabled:opacity-60 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded transition-all cursor-pointer disabled:cursor-wait flex items-center gap-1.5 shadow-2xs"
+            title="Immediately sync active ZipyPost shipment statuses"
+          >
+            <FiRefreshCw className={syncingZipyOrders ? 'animate-spin' : ''} size={12} />
+            {syncingZipyOrders ? 'Syncing Orders...' : 'Sync Orders'}
+          </button>
+          <button
+            type="button"
             onClick={refreshAdminData}
             disabled={loadingFinancials}
             className="bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
@@ -411,7 +449,7 @@ export default function DashboardView({
           <span className="text-[10px] text-stone-400 font-mono">Click card for detailed lists</span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-6 gap-4">
           <div className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2">
             <div className="flex justify-between items-start">
               <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total Orders</span>
@@ -486,6 +524,56 @@ export default function DashboardView({
             </div>
           </div>
 
+          <div
+            onClick={() => setStoreMetricModalType('rto_orders')}
+            className="bg-white border border-orange-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-orange-500 transition-all hover:bg-orange-50/40 group"
+            title={financialSummary?.zipypost?.rto_charges_error || 'Click to view RTO orders and ZipyPost net billed charges'}
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-orange-700 tracking-wider">RTO Loss (Net)</span>
+              <FiRefreshCw className="text-orange-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-orange-800">
+                {rtoLedgerLoaded ? `Rs. ${rtoLossActual.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : loadingFinancials ? 'Loading ledger…' : 'Ledger unavailable'}
+              </h3>
+              <p className="text-[9px] text-orange-700 font-semibold mt-0.5 uppercase tracking-wide">
+                {rtoBilledOrders.length} billed · {rtoPendingOrders.length} pending · details &rarr;
+              </p>
+              {rtoPendingOrders.length > 0 && <p className="text-[9px] text-stone-500">Pending freight est. Rs. {rtoPendingEstimate.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>}
+            </div>
+          </div>
+
+          <div
+            onClick={() => setStoreMetricModalType('rto_in_transit')}
+            className="bg-white border border-amber-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-amber-500 transition-all hover:bg-amber-50/40 group"
+            title="Click to view RTO shipments currently in transit"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-amber-700 tracking-wider">RTO In Transit</span>
+              <FiTruck className="text-amber-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-amber-800">{rtoInTransitOrders.length}</h3>
+              <p className="text-[9px] text-amber-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">View Orders &rarr;</p>
+            </div>
+          </div>
+
+          <div
+            onClick={() => setStoreMetricModalType('rto_delivered')}
+            className="bg-white border border-emerald-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-emerald-500 transition-all hover:bg-emerald-50/40 group"
+            title="Click to view RTO shipments delivered back to sender"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-emerald-700 tracking-wider">RTO Delivered</span>
+              <FiCheckCircle className="text-emerald-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-emerald-800">{rtoDeliveredOrders.length}</h3>
+              <p className="text-[9px] text-emerald-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">View Orders &rarr;</p>
+            </div>
+          </div>
+
           <div 
             onClick={() => setShowSalesListModal(true)}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-[#8c6239] transition-all hover:bg-stone-50/80"
@@ -502,7 +590,10 @@ export default function DashboardView({
           </div>
 
           <div 
-            onClick={() => setShowProfitListModal(true)}
+            onClick={() => {
+              setProfitListModalMode?.('normal');
+              setShowProfitListModal(true);
+            }}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-purple-500 transition-all hover:bg-stone-50/80"
             title="Click to view delivery cost breakdown"
           >
@@ -517,7 +608,10 @@ export default function DashboardView({
           </div>
 
           <div 
-            onClick={() => setShowProfitListModal(true)}
+            onClick={() => {
+              setProfitListModalMode?.('normal');
+              setShowProfitListModal(true);
+            }}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-green-600 transition-all hover:bg-stone-50/80"
             title="Click to view net profit breakdown"
           >
@@ -683,7 +777,10 @@ export default function DashboardView({
 
           {/* Box 8: Total Profit After Minus Total Ads Amount */}
           <div
-            onClick={() => setShowProfitListModal && setShowProfitListModal(true)}
+            onClick={() => {
+              setProfitListModalMode?.('after_ads');
+              setShowProfitListModal && setShowProfitListModal(true);
+            }}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-emerald-600 transition-all hover:bg-stone-50/80 group"
             title="Total Profit minus Total Ads Amount"
           >
@@ -813,7 +910,7 @@ export default function DashboardView({
                     </div>
                     <div className="text-[10px] text-stone-500 font-light space-y-0.5">
                       {order.items && order.items.map((item, idx) => (
-                        <div key={idx} className="truncate max-w-60">
+                        <div key={idx} className="truncate max-w-40">
                           {item.product?.name || "Attar"} ({item.selectedSize || "3ml"}) x {item.quantity}
                         </div>
                       ))}

@@ -71,6 +71,8 @@ export default function OrdersView({
                 ? 'text-amber-700 border-amber-200 bg-amber-50'
                 : status === 'Cancelled'
                   ? 'text-red-700 border-red-200 bg-red-50'
+                  : status === 'RTO'
+                    ? 'text-orange-700 border-orange-200 bg-orange-50'
                   : 'text-stone-700 border-stone-200 bg-white';
 
           return (
@@ -199,6 +201,8 @@ export default function OrdersView({
                     <span className={`inline-block px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full ${
                       order.status === 'Delivered'
                         ? 'bg-green-100 text-green-800'
+                        : order.status === 'RTO'
+                          ? 'bg-orange-100 text-orange-800'
                         : order.status === 'Shipped'
                           ? 'bg-blue-100 text-blue-800'
                           : order.status === 'Cancelled'
@@ -210,7 +214,7 @@ export default function OrdersView({
                   </td>
                   <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center gap-2">
-                      {order.status !== 'Shipped' && order.status !== 'Delivered' && order.status !== 'Cancelled' && (
+                      {order.status !== 'Shipped' && order.status !== 'Delivered' && order.status !== 'Cancelled' && order.status !== 'RTO' && (
                         <button
                           onClick={() => requestOrderStatusUpdate(order, 'Shipped')}
                           className="p-1.5 bg-stone-50 hover:bg-blue-50 text-blue-600 border border-stone-200 hover:border-blue-300 rounded transition-colors cursor-pointer"
@@ -219,7 +223,7 @@ export default function OrdersView({
                           <FiClock size={12} />
                         </button>
                       )}
-                      {order.status !== 'Delivered' && order.status !== 'Cancelled' && (
+                      {order.status !== 'Delivered' && order.status !== 'Cancelled' && order.status !== 'RTO' && (
                         <button
                           onClick={() => requestOrderStatusUpdate(order, 'Delivered')}
                           className="p-1.5 bg-stone-50 hover:bg-green-50 text-green-600 border border-stone-200 hover:border-green-300 rounded transition-colors cursor-pointer"
@@ -228,7 +232,7 @@ export default function OrdersView({
                           <FiCheckCircle size={12} />
                         </button>
                       )}
-                      {order.status !== 'Delivered' && order.status !== 'Cancelled' && (
+                      {order.status !== 'Delivered' && order.status !== 'Cancelled' && order.status !== 'RTO' && (
                         <button
                           onClick={() => requestOrderStatusUpdate(order, 'Cancelled')}
                           className="p-1.5 bg-stone-50 hover:bg-red-50 text-red-650 border border-stone-200 hover:border-red-300 rounded transition-colors cursor-pointer"

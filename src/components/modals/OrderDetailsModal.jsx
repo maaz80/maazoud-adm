@@ -83,6 +83,16 @@ export default function OrderDetailsModal({
   const selectedProduct = addableProducts.find(product => String(product.id) === String(productToAdd));
   const selectedSizeStock = sizeToAdd === '6ml' ? selectedProduct?.stock_6ml : selectedProduct?.stock_3ml;
   const selectedVariantAvailable = isVariantAvailable(selectedProduct, sizeToAdd);
+  const courierStatusForDisplay = String(
+    selectedOrder.shipment_details?.zipypost_status
+    || selectedOrder.shipment_details?.shiprocket_status
+    || selectedOrder.shiprocket_status
+    || ''
+  ).trim();
+  const displayOrderStatus = String(selectedOrder.status || '').toLowerCase() === 'rto' && courierStatusForDisplay
+    ? courierStatusForDisplay
+    : selectedOrder.status;
+  const isRtoDisplayStatus = /\brto\b|return to origin|returned to origin|return in transit|return initiated/i.test(String(displayOrderStatus || ''));
 
   const saveShippingAddress = async () => {
     if (!addressDraft.address.trim() || !addressDraft.city.trim() || !addressDraft.state.trim() || !addressDraft.pincode.trim()) {
@@ -200,7 +210,9 @@ export default function OrderDetailsModal({
               <div>
                 <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">Order Status</span>
                 <span className={`inline-block px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full mt-1 ${
-                  selectedOrder.status === 'Delivered'
+                  isRtoDisplayStatus
+                    ? 'bg-orange-100 text-orange-800'
+                    : selectedOrder.status === 'Delivered'
                     ? 'bg-green-100 text-green-800'
                     : selectedOrder.status === 'Shipped'
                       ? 'bg-blue-100 text-blue-800'
@@ -208,7 +220,7 @@ export default function OrderDetailsModal({
                         ? 'bg-red-100 text-red-800'
                         : 'bg-yellow-100 text-yellow-800'
                 }`}>
-                  {selectedOrder.status}
+                  {displayOrderStatus}
                 </span>
               </div>
               <div>
