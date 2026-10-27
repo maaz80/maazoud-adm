@@ -213,7 +213,13 @@ export default function FinancialModal({
               </div>
               <div className="bg-white p-4 rounded border border-blue-200/80 shadow-2xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500 block">Pending Bank Payout</span>
-                <h3 className="text-xl font-bold text-purple-700 mt-1">₹ {financialSummary?.razorpay?.unsettled_balance || 0}</h3>
+                <h3 className="text-xl font-bold text-purple-700 mt-1">
+                  {financialSummary?.razorpay?.connected
+                    && Object.prototype.hasOwnProperty.call(financialSummary?.razorpay || {}, 'pending_reconciliation_error')
+                    && !financialSummary?.razorpay?.pending_reconciliation_error
+                    ? `₹ ${financialSummary?.razorpay?.unsettled_balance || 0}`
+                    : 'Verification unavailable'}
+                </h3>
                 <p className="text-[10px] text-stone-400 mt-0.5">Unsettled online payments pending bank transfer</p>
               </div>
             </div>

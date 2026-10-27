@@ -2052,6 +2052,18 @@ export default function App() {
     ? orders.filter(o => isOrderInDateRange(o, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd))
     : orders;
   const dashboardNonCancelledOrders = dashboardOrders.filter(o => !['Cancelled', 'RTO'].includes(getOrderStatus(o)));
+  const dashboardShipmentOrders = dashboardOrders.filter(o => getOrderStatus(o) !== 'Cancelled');
+  const getDashboardShipmentCost = (order) => {
+    if (isRtoOrder(order)) {
+      const awb = String(order.shipment_details?.zipypost_awb || order.zipypost_awb || '').trim().toUpperCase();
+      const ledger = awb ? financialSummary?.zipypost?.rto_charges_by_awb?.[awb] : null;
+      if (ledger?.net_charge !== null && ledger?.net_charge !== undefined && Number.isFinite(Number(ledger.net_charge))) {
+        return Number(ledger.net_charge);
+      }
+    }
+    const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(order, products);
+    return hasDeliveryCost ? deliveryCost : 0;
+  };
   const dashboardDeliveredOrders = dashboardOrders.filter(o => getOrderStatus(o) === 'Delivered');
 
   const dashboardOrderStatusCounts = {
@@ -2065,9 +2077,8 @@ export default function App() {
   };
 
   const dashboardCalculatedSalesTotal = Number(dashboardNonCancelledOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0).toFixed(2));
-  const dashboardCalculatedDeliveryTotal = Number(dashboardNonCancelledOrders.reduce((sum, o) => {
-    const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(o, products);
-    return sum + (hasDeliveryCost ? deliveryCost : 0);
+  const dashboardCalculatedDeliveryTotal = Number(dashboardShipmentOrders.reduce((sum, order) => {
+    return sum + getDashboardShipmentCost(order);
   }, 0).toFixed(2));
   const dashboardCalculatedProfitTotal = Number(dashboardNonCancelledOrders.reduce((sum, o) => {
     const { profit, hasDeliveryCost } = calculateOrderProfit(o, products);
@@ -2453,7 +2464,9 @@ export default function App() {
         setShowProfitListModal={setShowProfitListModal}
         mode={profitListModalMode}
         nonCancelledOrders={dashboardNonCancelledOrders}
+        shipmentOrders={dashboardShipmentOrders}
         products={products}
+        financialSummary={financialSummary}
         calculatedSalesTotal={dashboardCalculatedSalesTotal}
         calculatedDeliveryTotal={dashboardCalculatedDeliveryTotal}
         calculatedProfitTotal={dashboardCalculatedProfitTotal}

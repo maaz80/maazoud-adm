@@ -176,6 +176,8 @@ export default function DashboardView({
   const localRzpTotalSum = prepaidOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
 
   const isRzpApiConnected = Boolean(financialSummary?.razorpay?.connected);
+  const hasRazorpayReconciliationStatus = Object.prototype.hasOwnProperty.call(financialSummary?.razorpay || {}, 'pending_reconciliation_error');
+  const hasRazorpayPendingVerification = hasRazorpayReconciliationStatus && !financialSummary?.razorpay?.pending_reconciliation_error;
 
   const rzpSettledFilteredSum = (filteredFinancialSummary?.razorpay?.settlements_schedule || []).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
   const rzpPendingFilteredSum = (filteredFinancialSummary?.razorpay?.pending_schedule || []).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
@@ -608,7 +610,7 @@ export default function DashboardView({
 
           <div 
             onClick={() => {
-              setProfitListModalMode?.('normal');
+              setProfitListModalMode?.('shipment_cost');
               setShowProfitListModal(true);
             }}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-purple-500 transition-all hover:bg-stone-50/80"
@@ -626,7 +628,7 @@ export default function DashboardView({
 
           <div 
             onClick={() => {
-              setProfitListModalMode?.('normal');
+              setProfitListModalMode?.('total_profit');
               setShowProfitListModal(true);
             }}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-green-600 transition-all hover:bg-stone-50/80"
@@ -856,7 +858,9 @@ export default function DashboardView({
               <FiClock className="text-sky-600" size={18} />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-sky-800">₹ {formatApprox(razorpayPendingAmount)}</h3>
+              <h3 className="text-xl font-bold text-sky-800">{isRzpApiConnected && hasRazorpayPendingVerification
+                ? `₹ ${formatApprox(razorpayPendingAmount)}`
+                : isRzpApiConnected && !hasRazorpayReconciliationStatus ? 'Backend update needed' : 'Verification unavailable'}</h3>
               <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">
                 Aane Wala Paisa &rarr;
               </p>

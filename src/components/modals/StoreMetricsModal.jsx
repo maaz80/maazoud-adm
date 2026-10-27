@@ -1142,16 +1142,23 @@ export default function StoreMetricsModal({
           {/* 4. RAZORPAY PENDING BANK PAYOUT MODAL */}
           {modalType === 'razorpay_pending' && (() => {
             const pendingTotal = razorpayPendingItems.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-            const unsettled = pendingTotal > 0 ? pendingTotal : (financialSummary?.razorpay?.unsettled_balance || 0);
+            const hasReconciliationStatus = Object.prototype.hasOwnProperty.call(financialSummary?.razorpay || {}, 'pending_reconciliation_error');
+            const backendUpdateRequired = !hasReconciliationStatus;
+            const reconciliationError = financialSummary?.razorpay?.pending_reconciliation_error
+              || (!hasReconciliationStatus ? 'Pending amount has not been verified by Razorpay reconciliation.' : null);
+            const hasReconciledBalance = financialSummary?.razorpay?.unsettled_balance !== null && financialSummary?.razorpay?.unsettled_balance !== undefined;
+            const unsettled = pendingTotal > 0 ? pendingTotal : (hasReconciledBalance ? Number(financialSummary.razorpay.unsettled_balance) : 0);
 
             return (
               <div className="space-y-4">
                 <div className="bg-sky-50 p-4 rounded border border-sky-200 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <span className="text-[10px] uppercase font-bold text-sky-800 tracking-wider block">Pending Razorpay Transfer to Bank</span>
-                    <h4 className="text-2xl font-bold text-sky-900 mt-0.5">₹ {unsettled.toLocaleString('en-IN')}</h4>
+                    <h4 className="text-2xl font-bold text-sky-900 mt-0.5">{backendUpdateRequired ? 'Backend update needed' : reconciliationError ? 'Verification unavailable' : `₹ ${unsettled.toLocaleString('en-IN')}`}</h4>
                     <p className="text-[10px] text-sky-700 mt-0.5">
-                      Razorpay settlements trigger automatically next business morning (T+1 Daily Cycle) into your registered bank account.
+                      {backendUpdateRequired
+                        ? 'This admin is receiving the old financial API response. Deploy the updated Maazoud API, then refresh.'
+                        : reconciliationError || "Pending amount includes only captured payments not found in processed settlements, less Razorpay's reported fee."}
                     </p>
                   </div>
                   <div className="bg-white px-3 py-2 rounded border border-sky-200 text-right">
@@ -1160,9 +1167,9 @@ export default function StoreMetricsModal({
                   </div>
                 </div>
 
-                {razorpayPendingItems.length > 0 ? (
+                {razorpayPendingItems.length > 0 && !reconciliationError ? (
                   <div className="overflow-x-auto border border-stone-200 rounded">
-                    <table className="w-full text-left text-xs border-collapse min-w-150">
+                    <table className="w-full text-left text-xs border-collapse min-w-175">
                       <thead>
                         <tr className="bg-sky-100/60 text-sky-950 font-bold uppercase text-[9px] tracking-wider">
                           <th className="p-3">Payment ID</th>
@@ -1170,6 +1177,7 @@ export default function StoreMetricsModal({
                           <th className="p-3">Customer Name</th>
                           <th className="p-3">Payment Mode</th>
                           <th className="p-3">Status</th>
+                          <th className="p-3 text-right">Razorpay Fee (incl. GST)</th>
                           <th className="p-3 text-right">Amount (₹)</th>
                         </tr>
                       </thead>
@@ -1185,11 +1193,18 @@ export default function StoreMetricsModal({
                                 {p.status || 'Pending Payout'}
                               </span>
                             </td>
+                            <td className="p-3 text-right text-stone-600">{p.fee_known ? `₹ ${Number(p.fee_amount || 0).toLocaleString('en-IN')}` : 'Not posted'}</td>
                             <td className="p-3 text-right font-bold text-sky-900">₹ {parseFloat(p.amount).toLocaleString('en-IN')}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                ) : reconciliationError ? (
+                  <div className="bg-amber-50 border border-amber-200 p-5 rounded text-center text-sm text-amber-900">
+                    {backendUpdateRequired
+                      ? 'The financial API needs an update before Razorpay pending amounts can be verified.'
+                      : 'Razorpay settlements could not be verified, so payments are not being marked pending.'}
                   </div>
                 ) : (
                   <div className="bg-emerald-50 border border-emerald-200 p-6 rounded text-center space-y-2">
@@ -1661,7 +1676,17 @@ export default function StoreMetricsModal({
             datedRtoOrders.forEach(({ order }, index) => {
               rtoSequenceByOrderId.set(String(order.id), index + 1);
             });
-            const filtered = stageFilteredOrders.filter(order => {
+            const rtoBillingOrders = modalType === 'rto_orders'
+              ? [...stageFilteredOrders].sort((a, b) => {
+                  const aSequence = rtoSequenceByOrderId.get(String(a.id));
+                  const bSequence = rtoSequenceByOrderId.get(String(b.id));
+                  if (aSequence == null && bSequence == null) return String(b.id || '').localeCompare(String(a.id || ''));
+                  if (aSequence == null) return 1;
+                  if (bSequence == null) return -1;
+                  return bSequence - aSequence;
+                })
+              : stageFilteredOrders;
+            const filtered = rtoBillingOrders.filter(order => {
               const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || '';
               return [order.id, order.customer_name, order.phone, order.city, order.state, order.pincode, awb]
                 .some(value => String(value || '').toLowerCase().includes(q));

@@ -1,11 +1,13 @@
 ﻿import React from 'react';
-import { calculateOrderProfit } from '../../utils/helpers';
+import { calculateOrderProfit, isRtoOrder } from '../../utils/helpers';
 
 export default function ProfitListModal({
   showProfitListModal,
   setShowProfitListModal,
   nonCancelledOrders,
+  shipmentOrders = [],
   products,
+  financialSummary,
   calculatedSalesTotal,
   calculatedDeliveryTotal,
   calculatedProfitTotal,
@@ -17,8 +19,19 @@ export default function ProfitListModal({
   setInlineEditValue,
   handleSaveInlineEdit
 }) {
+  const [rtoFilter, setRtoFilter] = React.useState('all');
+  React.useEffect(() => {
+    if (showProfitListModal) setRtoFilter('all');
+  }, [showProfitListModal, mode]);
+
   if (!showProfitListModal) return null;
   const isAfterAdsMode = mode === 'after_ads';
+  const isShipmentCostMode = mode === 'shipment_cost';
+  const isTotalProfitMode = mode === 'total_profit';
+  const includesRtoOrders = isShipmentCostMode || isTotalProfitMode;
+  const ordersToShow = includesRtoOrders
+    ? shipmentOrders.filter(order => rtoFilter === 'all' || (rtoFilter === 'rto' ? isRtoOrder(order) : !isRtoOrder(order)))
+    : nonCancelledOrders;
 
   const adCostByOrder = new Map();
   let totalAdSpend = 0;
@@ -33,6 +46,33 @@ export default function ProfitListModal({
     });
   });
   const formatAmount = value => Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  const getRtoDeliveryCharge = (order) => {
+    const awb = String(order.shipment_details?.zipypost_awb || order.zipypost_awb || '').trim().toUpperCase();
+    const ledger = awb ? financialSummary?.zipypost?.rto_charges_by_awb?.[awb] : null;
+    if (ledger?.net_charge !== null && ledger?.net_charge !== undefined && Number.isFinite(Number(ledger.net_charge))) {
+      return { charge: Number(ledger.net_charge), hasCharge: true };
+    }
+    const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(order, products);
+    return { charge: hasDeliveryCost ? deliveryCost : 0, hasCharge: hasDeliveryCost };
+  };
+  const getOrderDeliveryCharge = (order) => {
+    if (isRtoOrder(order)) return getRtoDeliveryCharge(order).charge;
+    const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(order, products);
+    return hasDeliveryCost ? deliveryCost : 0;
+  };
+  const displaySalesTotal = includesRtoOrders
+    ? ordersToShow.reduce((total, order) => total + (isRtoOrder(order) ? 0 : Number(order.total_amount) || 0), 0)
+    : calculatedSalesTotal;
+  const displayDeliveryTotal = includesRtoOrders
+    ? ordersToShow.reduce((total, order) => total + getOrderDeliveryCharge(order), 0)
+    : calculatedDeliveryTotal;
+  const totalProfitForTotalModal = isTotalProfitMode
+    ? ordersToShow.reduce((total, order) => {
+        if (isRtoOrder(order)) return total - getRtoDeliveryCharge(order).charge;
+        const { profit, hasDeliveryCost } = calculateOrderProfit(order, products);
+        return total + (hasDeliveryCost ? profit : 0);
+      }, 0)
+    : calculatedProfitTotal;
 
   return (
     <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans">
@@ -43,7 +83,7 @@ export default function ProfitListModal({
           <div>
             <span className="text-[9px] uppercase font-bold text-green-700 tracking-widest block">Financial Profitability</span>
             <h3 className="text-sm font-bold text-stone-900">
-              {isAfterAdsMode ? 'Profit After Ads: Order Breakdown' : 'Net Profit Breakdown List'}
+              {isShipmentCostMode ? 'Shipment Cost Breakdown List' : isTotalProfitMode ? 'Total Profit Breakdown List' : isAfterAdsMode ? 'Profit After Ads: Order Breakdown' : 'Net Profit Breakdown List'}
             </h3>
           </div>
           <button
@@ -57,6 +97,29 @@ export default function ProfitListModal({
 
         {/* Body */}
         <div className="p-6 overflow-y-auto max-h-[60vh] space-y-4">
+          {includesRtoOrders && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Orders:</span>
+              {[
+                { id: 'all', label: 'All Orders' },
+                { id: 'rto', label: 'RTO Only' },
+                { id: 'without_rto', label: 'Without RTO' }
+              ].map(filter => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  onClick={() => setRtoFilter(filter.id)}
+                  className={`rounded border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                    rtoFilter === filter.id
+                      ? 'border-purple-700 bg-purple-700 text-white'
+                      : 'border-stone-200 bg-white text-stone-600 hover:bg-stone-100'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="overflow-x-auto border border-stone-200 rounded">
             <table className="w-full text-left text-xs border-collapse min-w-212.5">
             <thead>
@@ -74,18 +137,30 @@ export default function ProfitListModal({
               </tr>
             </thead>
             <tbody>
-              {nonCancelledOrders.map(order => {
-                const { baseCost, deliveryCost, hasDeliveryCost, sellingPrice, profit } = calculateOrderProfit(order, products);
+              {ordersToShow.length ? ordersToShow.map(order => {
+                const orderProfit = calculateOrderProfit(order, products);
+                const isRto = includesRtoOrders && isRtoOrder(order);
+                const rtoChargeInfo = isRto ? getRtoDeliveryCharge(order) : null;
+                const deliveryCost = isRto
+                  ? rtoChargeInfo.charge
+                  : orderProfit.deliveryCost;
+                const hasDeliveryCost = isRto ? rtoChargeInfo.hasCharge : orderProfit.hasDeliveryCost;
+                const baseCost = isRto ? 0 : orderProfit.baseCost;
+                const sellingPrice = isRto ? 0 : orderProfit.sellingPrice;
+                const profit = isRto ? (hasDeliveryCost ? -deliveryCost : 0) : orderProfit.profit;
                 const adCost = adCostByOrder.get(String(order.id)) || 0;
                 const finalProfit = profit - adCost;
 
-                const isEditingSelling = inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'sellingPrice';
-                const isEditingBase = inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'baseCost';
-                const isEditingDelivery = inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'deliveryCost';
+                const isEditingSelling = !isRto && inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'sellingPrice';
+                const isEditingBase = !isRto && inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'baseCost';
+                const isEditingDelivery = !isRto && inlineEditingCell?.orderId === order.id && inlineEditingCell?.field === 'deliveryCost';
 
                 return (
                   <tr key={order.id} className="border-b border-stone-150 hover:bg-stone-50/50 transition-colors">
-                    <td className="p-3 font-mono font-bold text-stone-900">{order.id}</td>
+                    <td className="p-3 font-mono font-bold text-stone-900">
+                      {order.id}
+                      {isRto && <span className="ml-1.5 rounded bg-orange-100 px-1.5 py-0.5 text-[8px] font-sans font-bold uppercase text-orange-800">RTO</span>}
+                    </td>
                     <td className="p-3 text-stone-800">{order.customer_name}</td>
                     
                     {/* Selling Price */}
@@ -109,11 +184,12 @@ export default function ProfitListModal({
                       ) : (
                         <span
                           onClick={() => {
+                            if (isRto) return;
                             setInlineEditingCell({ orderId: order.id, field: 'sellingPrice' });
                             setInlineEditValue(String(sellingPrice));
                           }}
-                          className="cursor-pointer hover:bg-purple-100/70 hover:text-purple-800 px-2 py-1 rounded transition-colors font-semibold text-stone-900 border-b border-dashed border-stone-300 hover:border-purple-500"
-                          title="Click to edit Selling Price"
+                          className={`${isRto ? '' : 'cursor-pointer hover:bg-purple-100/70 hover:text-purple-800 border-b border-dashed border-stone-300 hover:border-purple-500'} px-2 py-1 rounded transition-colors font-semibold text-stone-900`}
+                          title={isRto ? 'RTO order: sale amount is zero' : 'Click to edit Selling Price'}
                         >
                           Rs. {sellingPrice}
                         </span>
@@ -141,11 +217,12 @@ export default function ProfitListModal({
                       ) : (
                         <span
                           onClick={() => {
+                            if (isRto) return;
                             setInlineEditingCell({ orderId: order.id, field: 'baseCost' });
                             setInlineEditValue(String(baseCost));
                           }}
-                          className="cursor-pointer hover:bg-purple-100/70 hover:text-purple-800 px-2 py-1 rounded transition-colors font-medium text-stone-600 border-b border-dashed border-stone-300 hover:border-purple-500"
-                          title="Click to edit Base Cost"
+                          className={`${isRto ? '' : 'cursor-pointer hover:bg-purple-100/70 hover:text-purple-800 border-b border-dashed border-stone-300 hover:border-purple-500'} px-2 py-1 rounded transition-colors font-medium text-stone-600`}
+                          title={isRto ? 'RTO order: returned product cost is zero' : 'Click to edit Base Cost'}
                         >
                           Rs. {baseCost}
                         </span>
@@ -173,15 +250,18 @@ export default function ProfitListModal({
                       ) : (
                         <span
                           onClick={() => {
+                            if (isRto) return;
                             setInlineEditingCell({ orderId: order.id, field: 'deliveryCost' });
                             setInlineEditValue(hasDeliveryCost ? String(deliveryCost) : '0');
                           }}
-                          className={`cursor-pointer px-2 py-1 rounded transition-colors border-b border-dashed ${
-                            hasDeliveryCost 
+                          className={`${isRto ? '' : 'cursor-pointer'} px-2 py-1 rounded transition-colors border-b border-dashed ${
+                            isRto && hasDeliveryCost
+                              ? 'font-semibold text-orange-800 border-orange-300'
+                              : hasDeliveryCost
                               ? 'font-medium text-stone-600 border-stone-300 hover:bg-purple-100/70 hover:text-purple-800 hover:border-purple-500' 
                               : 'font-bold text-amber-700 bg-amber-50 border-amber-300 hover:bg-amber-100'
                           }`}
-                          title="Click to set/edit Delivery Charge"
+                          title={isRto ? 'RTO net charge from courier ledger' : 'Click to set/edit Delivery Charge'}
                         >
                           {hasDeliveryCost ? `Rs. ${deliveryCost}` : 'N/A'}
                         </span>
@@ -218,7 +298,11 @@ export default function ProfitListModal({
                     </>}
                   </tr>
                 );
-              })}
+              }) : (
+                <tr>
+                  <td colSpan={isAfterAdsMode ? 8 : 6} className="p-6 text-center text-stone-400 italic">No orders match this filter.</td>
+                </tr>
+              )}
             </tbody>
           </table>
           </div>
@@ -227,15 +311,15 @@ export default function ProfitListModal({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-between items-center flex-wrap gap-4">
           <div className="flex items-center gap-6">
-            <span className="text-xs font-bold text-[#8c6239]">Total Sales: Rs. {calculatedSalesTotal}</span>
-            <span className="text-xs font-bold text-purple-700">Total Delivery Cost: Rs. {calculatedDeliveryTotal}</span>
+            <span className="text-xs font-bold text-[#8c6239]">Total Sales: Rs. {formatAmount(displaySalesTotal)}</span>
+            <span className="text-xs font-bold text-purple-700">Total Delivery Cost: Rs. {formatAmount(displayDeliveryTotal)}</span>
             {isAfterAdsMode ? <>
               <span className="text-xs font-bold text-stone-600">Profit Before Ads: Rs. {calculatedProfitTotal}</span>
               <span className="text-xs font-bold text-amber-700">Ad Spend: Rs. {formatAmount(totalAdSpend)}</span>
               <span className="text-xs font-bold text-green-700">Profit After Ads: Rs. {formatAmount(calculatedProfitTotal - totalAdSpend)}</span>
-            </> : (
-              <span className="text-xs font-bold text-green-700">Total Net Profit: Rs. {calculatedProfitTotal}</span>
-            )}
+            </> : !isShipmentCostMode ? (
+              <span className="text-xs font-bold text-green-700">Total Net Profit: Rs. {formatAmount(totalProfitForTotalModal)}</span>
+            ) : null}
           </div>
           <button
             type="button"
