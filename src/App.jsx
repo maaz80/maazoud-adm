@@ -96,7 +96,7 @@ export default function App() {
   const [showProfitListModal, setShowProfitListModal] = useState(false);
   const [profitListModalMode, setProfitListModalMode] = useState('normal');
   const [showDeliveredListModal, setShowDeliveredListModal] = useState(false);
-  const [deliveredDateFilter, setDeliveredDateFilter] = useState('all');
+  const [deliveredDateFilter, setDeliveredDateFilter] = useState('today');
   const [deliveredSearchQuery, setDeliveredSearchQuery] = useState('');
   const [dashboardDeliveredFilter, setDashboardDeliveredFilter] = useState('yesterday');
   const [dashboardDateFilter, setDashboardDateFilter] = useState('all');

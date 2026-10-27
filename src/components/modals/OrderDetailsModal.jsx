@@ -817,7 +817,7 @@ export default function OrderDetailsModal({
                     }}
                     className="bg-sky-600 hover:bg-sky-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all flex items-center gap-1.5"
                   >
-                    <span>🚀</span> Ship with ZipyPost
+                   Ship with ZipyPost
                   </button>
                 </>
               )}
@@ -866,7 +866,7 @@ export default function OrderDetailsModal({
                   className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer transition-all flex items-center gap-1.5"
                   title="Manually link a ZipyPost or courier AWB tracking number to this order"
                 >
-                  <span>📦</span> {selectedOrder.shipment_details?.zipypost_awb ? 'Edit AWB' : 'Attach ZipyPost AWB'}
+                   {selectedOrder.shipment_details?.zipypost_awb ? 'Edit AWB' : 'Attach ZipyPost AWB'}
                 </button>
               )}
               {selectedOrder.status !== 'Shipped' && selectedOrder.status !== 'Delivered' && selectedOrder.status !== 'Cancelled' && (

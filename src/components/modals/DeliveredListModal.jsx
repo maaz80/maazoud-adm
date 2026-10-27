@@ -16,6 +16,10 @@ export default function DeliveredListModal({
   handleDownloadDeliveredReport,
   setSelectedOrder
 }) {
+  React.useEffect(() => {
+    if (showDeliveredListModal) setDeliveredDateFilter('today');
+  }, [showDeliveredListModal, setDeliveredDateFilter]);
+
   if (!showDeliveredListModal) return null;
 
   return (

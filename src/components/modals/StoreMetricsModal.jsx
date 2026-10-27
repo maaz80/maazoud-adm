@@ -13,6 +13,91 @@ import {
 } from 'react-icons/fi';
 import { calculateOrderProfit, getCurrentCourierStatusText, getOrderStatus } from '../../utils/helpers';
 
+const parseRtoDate = (value) => {
+  if (!value) return null;
+  const text = String(value).trim();
+  const dmy = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(.*)$/);
+  const date = dmy
+    ? new Date(Date.UTC(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]), 12))
+    : new Date(text);
+  return Number.isFinite(date.getTime()) ? date : null;
+};
+
+const getRtoInTransitAt = (order) => {
+  const savedDate = parseRtoDate(order.shipment_details?.rto_in_transit_at);
+  if (savedDate) return savedDate;
+
+  const tracking = order.shipment_details?.zipypost_tracking_info || {};
+  const scans = [tracking.scans, tracking.activities, tracking.events].filter(Array.isArray).flat();
+  const matchingScans = scans.map(scan => {
+    const status = `${scan.status || ''} ${scan.activity || ''} ${scan.status_description || ''} ${scan.remark || ''} ${scan.scan || ''}`
+      .toLowerCase().replace(/[_-]+/g, ' ');
+    const isRto = /\brto\b|return to origin|returned to origin|return in transit|return initiated|return notified/.test(status);
+    const isTransit = /\bin transit\b|\bnotified\b|\binitiated\b/.test(status);
+    if (!isRto || !isTransit) return null;
+    const rawDate = scan.scan_time || scan.scan_datetime || scan.date || scan.datetime || scan.timestamp;
+    const date = parseRtoDate(rawDate);
+    if (!date) return null;
+    const rawTime = scan.time;
+    if (rawTime && !rawDate?.includes?.('T')) {
+      const timeMatch = String(rawTime).match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      if (timeMatch) {
+        date.setUTCHours(Number(timeMatch[1]), Number(timeMatch[2]), Number(timeMatch[3] || 0));
+        date.setTime(date.getTime() - 330 * 60 * 1000);
+      }
+    }
+    return date;
+  }).filter(Boolean).sort((a, b) => a - b);
+  return matchingScans[0] || null;
+};
+
+const getExceptionAt = (order) => {
+  const shipment = order.shipment_details || {};
+  const savedDate = parseRtoDate(shipment.rto_exception_at || shipment.exception_at);
+  if (savedDate) return savedDate;
+
+  const tracking = shipment.zipypost_tracking_info || {};
+  const scans = [tracking.scans, tracking.activities, tracking.events, shipment.last_webhook_payload?.scans]
+    .filter(Array.isArray).flat();
+  const matchingScans = scans.map(scan => {
+    const status = `${scan.status || ''} ${scan.activity || ''} ${scan.status_description || ''} ${scan.remark || ''} ${scan.scan || scan['sr-status-label'] || ''}`
+      .toLowerCase().replace(/[_-]+/g, ' ');
+    if (!/\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr|out for delivery)\b/.test(status)) return null;
+    const rawDate = scan.scan_time || scan.scan_datetime || scan.date || scan.datetime || scan.timestamp;
+    const date = parseRtoDate(rawDate);
+    if (!date) return null;
+    const timeMatch = String(scan.time || '').match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (timeMatch && !String(rawDate).includes('T')) {
+      date.setUTCHours(Number(timeMatch[1]), Number(timeMatch[2]), Number(timeMatch[3] || 0));
+      date.setTime(date.getTime() - 330 * 60 * 1000);
+    }
+    return date;
+  }).filter(Boolean).sort((a, b) => b - a);
+  return matchingScans[0] || null;
+};
+
+const formatRtoDate = (date) => new Intl.DateTimeFormat('en-IN', {
+  timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric'
+}).format(date);
+
+const getPayoutCustomerName = (entry, orders) => {
+  const identifiers = [entry?.id, entry?.order_id, entry?.awb].filter(Boolean).map(value => String(value).trim().toLowerCase());
+  const order = (orders || []).find(item => {
+    const paymentMethod = String(item.payment_method || '').trim().toLowerCase();
+    const orderIdentifiers = [
+      item.id,
+      item.shiprocket_order_id,
+      item.shiprocket_awb,
+      item.shipment_details?.zipypost_awb,
+      item.zipypost_awb,
+      item.razorpay_order_id,
+      item.razorpay_payment_id
+    ].filter(Boolean).map(value => String(value).trim().toLowerCase());
+    return identifiers.some(identifier => orderIdentifiers.includes(identifier) || paymentMethod.includes(identifier));
+  });
+  return order?.customer_name || entry?.customer_name || 'N/A';
+};
+
 export default function StoreMetricsModal({
   isOpen,
   onClose,
@@ -973,6 +1058,7 @@ export default function StoreMetricsModal({
               const q = searchQuery.toLowerCase();
               return (
                 String(s.id || '').toLowerCase().includes(q) ||
+                (s.customer_names || []).join(' ').toLowerCase().includes(q) ||
                 String(s.utr || '').toLowerCase().includes(q) ||
                 String(s.date || '').toLowerCase().includes(q)
               );
@@ -998,7 +1084,7 @@ export default function StoreMetricsModal({
                   <FiSearch className="absolute left-3 top-2.5 text-stone-400" size={14} />
                   <input
                     type="text"
-                    placeholder="Search by Settlement ID, UTR reference, Date..."
+                    placeholder="Search by Settlement ID, customer name, UTR, Date..."
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     className="w-full pl-9 pr-3 py-2 bg-stone-50 border border-stone-200 rounded text-xs text-stone-800 placeholder-stone-400 focus:outline-none focus:border-[#8c6239]"
@@ -1006,10 +1092,11 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-162.5">
+                  <table className="w-full text-left text-xs border-collapse min-w-180">
                     <thead>
                       <tr className="bg-blue-100/60 text-blue-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Settlement ID</th>
+                        <th className="p-3">Customer Name(s)</th>
                         <th className="p-3">Settlement Date</th>
                         <th className="p-3">Bank Reference (UTR)</th>
                         <th className="p-3">Status</th>
@@ -1019,9 +1106,15 @@ export default function StoreMetricsModal({
                     </thead>
                     <tbody className="divide-y divide-blue-50">
                       {filtered.length > 0 ? (
-                        filtered.map((s, idx) => (
+                        filtered.map((s, idx) => {
+                          const customerNames = s.customer_names || [];
+                          const visibleNames = customerNames.slice(0, 2).join(', ');
+                          return (
                           <tr key={s.id || idx} className="hover:bg-blue-50/50 transition-colors">
                             <td className="p-3 font-mono font-bold text-stone-900">{s.id}</td>
+                            <td className="p-3 text-stone-700" title={customerNames.join(', ')}>
+                              {customerNames.length ? `${visibleNames}${customerNames.length > 2 ? ` +${customerNames.length - 2} more` : ''}` : 'N/A'}
+                            </td>
                             <td className="p-3 text-stone-600">{new Date(s.date).toLocaleDateString('en-IN')}</td>
                             <td className="p-3 font-mono text-stone-700 font-semibold">{s.utr || 'Direct Bank Credit'}</td>
                             <td className="p-3">
@@ -1032,10 +1125,11 @@ export default function StoreMetricsModal({
                             <td className="p-3 text-stone-500 font-mono">₹ {(parseFloat(s.fees || 0) + parseFloat(s.tax || 0)).toFixed(2)}</td>
                             <td className="p-3 text-right font-bold text-blue-900 text-sm">₹ {parseFloat(s.amount).toLocaleString('en-IN')}</td>
                           </tr>
-                        ))
+                          );
+                        })
                       ) : (
                         <tr>
-                          <td colSpan={6} className="p-6 text-center text-stone-400 italic">No settlements found matching query.</td>
+                          <td colSpan={7} className="p-6 text-center text-stone-400 italic">No settlements found matching query.</td>
                         </tr>
                       )}
                     </tbody>
@@ -1073,7 +1167,7 @@ export default function StoreMetricsModal({
                         <tr className="bg-sky-100/60 text-sky-950 font-bold uppercase text-[9px] tracking-wider">
                           <th className="p-3">Payment ID</th>
                           <th className="p-3">Captured Date</th>
-                          <th className="p-3">Customer Email / Contact</th>
+                          <th className="p-3">Customer Name</th>
                           <th className="p-3">Payment Mode</th>
                           <th className="p-3">Status</th>
                           <th className="p-3 text-right">Amount (₹)</th>
@@ -1084,7 +1178,7 @@ export default function StoreMetricsModal({
                           <tr key={p.id || idx} className="hover:bg-sky-50/50">
                             <td className="p-3 font-mono font-bold text-stone-900">{p.id}</td>
                             <td className="p-3 text-stone-600">{new Date(p.date).toLocaleString('en-IN')}</td>
-                            <td className="p-3 text-stone-700">{p.customer_email || p.customer_contact || 'Customer'}</td>
+                            <td className="p-3 font-semibold text-stone-800">{getPayoutCustomerName(p, orders)}</td>
                             <td className="p-3 font-mono text-stone-600 uppercase text-[10px]">{p.method || 'UPI'}</td>
                             <td className="p-3">
                               <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-200">
@@ -1123,7 +1217,8 @@ export default function StoreMetricsModal({
                 String(r.id || '').toLowerCase().includes(q) ||
                 String(r.awb || '').toLowerCase().includes(q) ||
                 String(r.courier || '').toLowerCase().includes(q) ||
-                String(r.utr || '').toLowerCase().includes(q)
+                String(r.utr || '').toLowerCase().includes(q) ||
+                getPayoutCustomerName(r, orders).toLowerCase().includes(q)
               );
             });
 
@@ -1198,7 +1293,7 @@ export default function StoreMetricsModal({
                   <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-purple-100/60 text-purple-950 font-bold uppercase text-[9px] tracking-wider">
-                        <th className="p-3">Partner</th>
+                        <th className="p-3">Customer Name</th>
                         <th className="p-3">Order / ID</th>
                         <th className="p-3">AWB Code</th>
                         <th className="p-3">Courier</th>
@@ -1212,13 +1307,7 @@ export default function StoreMetricsModal({
                       {filtered.length > 0 ? (
                         filtered.map((r, idx) => (
                           <tr key={idx} className="hover:bg-purple-50/40 transition-colors">
-                            <td className="p-3">
-                              <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                r.partner === 'ZipyPost' ? 'bg-sky-100 text-sky-850 border border-sky-200' : 'bg-purple-100 text-purple-850 border border-purple-200'
-                              }`}>
-                                {r.partner || 'Shiprocket'}
-                              </span>
-                            </td>
+                            <td className="p-3 font-semibold text-stone-800">{getPayoutCustomerName(r, orders)}</td>
                             <td className="p-3 font-mono font-bold text-stone-900">{r.id}</td>
                             <td className="p-3 font-mono text-stone-600 text-[10px]">{r.awb || '—'}</td>
                             <td className="p-3 text-stone-700">{r.courier || 'Courier Partner'}</td>
@@ -1255,7 +1344,8 @@ export default function StoreMetricsModal({
                 String(p.id || '').toLowerCase().includes(q) ||
                 String(p.awb || '').toLowerCase().includes(q) ||
                 String(p.courier || '').toLowerCase().includes(q) ||
-                String(p.partner || '').toLowerCase().includes(q)
+                String(p.partner || '').toLowerCase().includes(q) ||
+                getPayoutCustomerName(p, orders).toLowerCase().includes(q)
               );
             });
 
@@ -1338,7 +1428,7 @@ export default function StoreMetricsModal({
                   <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-purple-100/60 text-purple-950 font-bold uppercase text-[9px] tracking-wider">
-                        <th className="p-3">Partner</th>
+                        <th className="p-3">Customer Name</th>
                         <th className="p-3">Order / Reference</th>
                         <th className="p-3">AWB Code</th>
                         <th className="p-3">Courier</th>
@@ -1355,13 +1445,7 @@ export default function StoreMetricsModal({
 
                           return (
                             <tr key={idx} className="hover:bg-purple-50/40 transition-colors">
-                              <td className="p-3">
-                                <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                  p.partner === 'ZipyPost' ? 'bg-sky-100 text-sky-850 border border-sky-200' : 'bg-purple-100 text-purple-850 border border-purple-200'
-                                }`}>
-                                  {p.partner || 'Shiprocket'}
-                                </span>
-                              </td>
+                              <td className="p-3 font-semibold text-stone-800">{getPayoutCustomerName(p, orders)}</td>
                               <td className="p-3 font-mono font-bold text-stone-900">{p.id}</td>
                               <td className="p-3 font-mono text-stone-600 text-[10px]">{p.awb || '—'}</td>
                               <td className="p-3 text-stone-700">{p.courier || 'Courier Partner'}</td>
@@ -1534,14 +1618,16 @@ export default function StoreMetricsModal({
                   </div>
                 </div>
                 <div className="overflow-x-auto rounded border border-stone-200">
-                  <table className="w-full min-w-[850px] border-collapse text-left text-xs">
-                    <thead><tr className="bg-amber-100/70 text-[9px] font-bold uppercase tracking-wider text-amber-950"><th className="p-3">Order</th><th className="p-3">Customer</th><th className="p-3">Location</th><th className="p-3">Courier Status</th><th className="p-3">AWB</th><th className="p-3 text-right">Order Value</th><th className="p-3 text-center">Details</th></tr></thead>
+                  <table className="w-full min-w-[950px] border-collapse text-left text-xs">
+                    <thead><tr className="bg-amber-100/70 text-[9px] font-bold uppercase tracking-wider text-amber-950"><th className="p-3">Order</th><th className="p-3">Exception Date</th><th className="p-3">Customer</th><th className="p-3">Location</th><th className="p-3">Courier Status</th><th className="p-3">AWB</th><th className="p-3 text-right">Order Value</th><th className="p-3 text-center">Details</th></tr></thead>
                     <tbody className="divide-y divide-amber-50">
                       {filtered.length ? filtered.map(order => {
+                        const exceptionAt = getExceptionAt(order);
                         const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || '—';
                         return (
                           <tr key={order.id} className="hover:bg-amber-50/40">
                             <td className="p-3"><span className="block font-mono font-bold text-stone-900">{order.id}</span><span className="text-[10px] text-stone-400">{order.created_at ? new Date(order.created_at).toLocaleDateString('en-IN') : '—'}</span></td>
+                            <td className="p-3 text-stone-700">{exceptionAt ? formatRtoDate(exceptionAt) : 'N/A'}</td>
                             <td className="p-3"><span className="block font-semibold text-stone-800">{order.customer_name || 'Customer'}</span><span className="font-mono text-[10px] text-stone-500">{order.phone || '—'}</span></td>
                             <td className="p-3 text-stone-600">{[order.city, order.state, order.pincode].filter(Boolean).join(', ') || order.address || '—'}</td>
                             <td className="p-3"><span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold uppercase text-amber-800">{order.shipment_details?.zipypost_status || order.shipment_details?.shiprocket_status || order.shiprocket_status || 'Exception'}</span></td>
@@ -1550,7 +1636,7 @@ export default function StoreMetricsModal({
                             <td className="p-3 text-center"><button type="button" onClick={() => setSelectedOrder && setSelectedOrder(order)} className="cursor-pointer rounded border border-stone-200 bg-white px-2 py-1 text-[10px] font-bold text-stone-700 hover:bg-stone-50">Details</button></td>
                           </tr>
                         );
-                      }) : <tr><td colSpan={7} className="p-7 text-center italic text-stone-400">No delivery exceptions found.</td></tr>}
+                      }) : <tr><td colSpan={8} className="p-7 text-center italic text-stone-400">No delivery exceptions found.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -1567,6 +1653,14 @@ export default function StoreMetricsModal({
               : modalType === 'rto_delivered'
                 ? rtoOrders.filter(order => getRtoStage(order) === 'delivered')
                 : rtoOrders;
+            const rtoSequenceByOrderId = new Map();
+            const datedRtoOrders = stageFilteredOrders
+              .map((order, index) => ({ order, index, date: getRtoInTransitAt(order) }))
+              .filter(entry => entry.date)
+              .sort((a, b) => a.date - b.date || String(a.order.id || '').localeCompare(String(b.order.id || '')) || a.index - b.index);
+            datedRtoOrders.forEach(({ order }, index) => {
+              rtoSequenceByOrderId.set(String(order.id), index + 1);
+            });
             const filtered = stageFilteredOrders.filter(order => {
               const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || '';
               return [order.id, order.customer_name, order.phone, order.city, order.state, order.pincode, awb]
@@ -1626,10 +1720,12 @@ export default function StoreMetricsModal({
                 </div>
 
                 <div className="overflow-x-auto border border-stone-200 rounded">
-                  <table className="w-full text-left text-xs border-collapse min-w-[1600px]">
+                  <table className="w-full text-left text-xs border-collapse min-w-[1740px]">
                     <thead>
                       <tr className="bg-orange-100/70 text-orange-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Order / Date</th>
+                        <th className="p-3">RTO Transit Date</th>
+                        <th className="p-3 text-center">Day Sequence</th>
                         <th className="p-3">Customer</th>
                         <th className="p-3">Delivery Location</th>
                         <th className="p-3">Items</th>
@@ -1651,6 +1747,8 @@ export default function StoreMetricsModal({
                         const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || 'N/A';
                         const courierStatus = order.shipment_details?.zipypost_status || order.status || 'RTO';
                         const ledger = getLedgerCharge(order);
+                        const rtoTransitAt = getRtoInTransitAt(order);
+                        const rtoSequence = rtoSequenceByOrderId.get(String(order.id));
                         const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(order, products);
                         const address = [order.city, order.state, order.pincode].filter(Boolean).join(', ');
                         const codReversal = Number(ledger?.cod_reversal || 0) || (Number(ledger?.cod_charge || 0) > 0 ? Number(ledger.cod_charge) : 0);
@@ -1661,6 +1759,8 @@ export default function StoreMetricsModal({
                               <span className="font-mono font-bold text-stone-900 block">{order.id || 'N/A'}</span>
                               <span className="text-[10px] text-stone-400">{order.created_at ? new Date(order.created_at).toLocaleDateString('en-IN') : 'N/A'}</span>
                             </td>
+                            <td className="p-3 text-stone-700">{rtoTransitAt ? formatRtoDate(rtoTransitAt) : 'N/A'}</td>
+                            <td className="p-3 text-center font-mono font-bold text-orange-800">{rtoSequence ? `#${rtoSequence}` : '—'}</td>
                             <td className="p-3">
                               <div className="font-semibold text-stone-800">{order.customer_name || 'Customer'}</div>
                               <div className="text-[10px] text-stone-500 font-mono">{order.phone || 'No phone'}</div>
@@ -1692,7 +1792,7 @@ export default function StoreMetricsModal({
                           </tr>
                         );
                       }) : (
-                        <tr><td colSpan={14} className="p-6 text-center text-stone-400 italic">No RTO orders match this search.</td></tr>
+                        <tr><td colSpan={16} className="p-6 text-center text-stone-400 italic">No RTO orders match this search.</td></tr>
                       )}
                     </tbody>
                   </table>
