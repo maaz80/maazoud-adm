@@ -15,9 +15,10 @@ import {
   FiXCircle,
   FiAlertCircle,
   FiCalendar,
-  FiTarget
+  FiTarget,
+  FiRepeat
 } from 'react-icons/fi';
-import { calculateOrderProfit, isOrderInDateRange, getCurrentCourierStatusText, getOrderStatus } from '../../utils/helpers';
+import { calculateOrderProfit, isOrderInDateRange, getCurrentCourierStatusText, getOrderStatus, getRepeatLabel, getDateRangeBounds } from '../../utils/helpers';
 import StoreMetricsModal from '../modals/StoreMetricsModal';
 
 const formatApprox = (val) => Math.round(parseFloat(val) || 0).toLocaleString('en-IN');
@@ -46,6 +47,7 @@ export default function DashboardView({
   products = [],
   orders = [],
   setSelectedOrder,
+  orderRepeatMap,
   dashboardDeliveredFilter,
   setDashboardDeliveredFilter,
   filterDeliveredOrdersByDate,
@@ -64,6 +66,26 @@ export default function DashboardView({
   const [storeMetricModalType, setStoreMetricModalType] = useState(null);
 
   const isDateFiltered = Boolean(dashboardDateFilter && dashboardDateFilter !== 'all');
+
+  const formattedDateRange = useMemo(() => {
+    if (!isDateFiltered) return '';
+    const bounds = getDateRangeBounds(dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd);
+    if (!bounds || (!bounds.start && !bounds.end)) return '';
+    const formatD = (d) => {
+      if (!d || isNaN(new Date(d).getTime())) return '';
+      return new Date(d).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      });
+    };
+    const s = formatD(bounds.start);
+    const e = formatD(bounds.end);
+    if (s && e) return `${s} - ${e}`;
+    if (s) return `${s} - End`;
+    if (e) return `Start - ${e}`;
+    return '';
+  }, [isDateFiltered, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd]);
 
   // Filter schedules inside financialSummary when a date filter is selected
   const filteredFinancialSummary = useMemo(() => {
@@ -418,8 +440,8 @@ export default function DashboardView({
 
       {/* Active Date Filter Notice Banner */}
       {isDateFiltered && (
-        <div className="bg-[#8c6239]/10 border border-[#8c6239]/30 rounded-md px-3.5 py-2 flex items-center justify-between text-xs text-stone-700">
-          <div className="flex items-center gap-2">
+        <div className="bg-[#8c6239]/10 border border-[#8c6239]/30 rounded-md px-3.5 py-2 flex flex-wrap items-center justify-between gap-3 text-xs text-stone-700">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="w-2 h-2 rounded-full bg-[#8c6239] animate-pulse"></span>
             <span className="font-semibold text-[#8c6239]">Filtered Period:</span>
             <span className="capitalize font-medium">
@@ -431,16 +453,23 @@ export default function DashboardView({
               ({orders.length} order{orders.length === 1 ? '' : 's'} in selected period)
             </span>
           </div>
-          <button
-            onClick={() => {
-              setDashboardDateFilter('all');
-              setDashboardCustomStart('');
-              setDashboardCustomEnd('');
-            }}
-            className="text-[11px] font-bold text-[#8c6239] hover:underline cursor-pointer flex items-center gap-1"
-          >
-            Reset to All Time ✕
-          </button>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {formattedDateRange && (
+              <span className="font-mono text-stone-800 font-bold bg-white/80 border border-[#8c6239]/30 px-2 py-0.5 rounded text-[11px] shadow-2xs">
+                {formattedDateRange}
+              </span>
+            )}
+            <button
+              onClick={() => {
+                setDashboardDateFilter('all');
+                setDashboardCustomStart('');
+                setDashboardCustomEnd('');
+              }}
+              className="text-[11px] font-bold text-[#8c6239] hover:underline cursor-pointer flex items-center gap-1"
+            >
+              Reset to All Time ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -925,9 +954,18 @@ export default function DashboardView({
                   className="flex justify-between items-center gap-4 text-xs hover:bg-stone-50 p-2.5 rounded cursor-pointer transition-colors border border-stone-150"
                 >
                   <div className="space-y-0.5">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono font-bold text-stone-900">{order.id}</span>
                       <span className="font-semibold text-stone-800">{order.customer_name}</span>
+                      {orderRepeatMap?.get(String(order.id))?.isRepeat && (
+                        <span 
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200"
+                          title={`Repeat Customer: Order #${orderRepeatMap.get(String(order.id)).orderIndex} (${orderRepeatMap.get(String(order.id)).totalOrders} total orders)`}
+                        >
+                          <FiRepeat size={8} />
+                          {getRepeatLabel(orderRepeatMap.get(String(order.id)).orderIndex)}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[10px] text-stone-500 font-light space-y-0.5">
                       {order.items && order.items.map((item, idx) => (
@@ -960,7 +998,7 @@ export default function DashboardView({
         {/* Right Column: Delivered Orders Dashboard View */}
         <div className="bg-white border border-stone-200 rounded-md p-5 shadow-2xs space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-150 pb-2.5">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <FiCheckCircle className="text-green-600" size={15} />
               <h3 className="text-xs uppercase font-bold tracking-wider text-stone-900">
                 Delivered Orders Ledger
@@ -1026,9 +1064,18 @@ export default function DashboardView({
                       className="flex items-center justify-between gap-3 text-xs p-2.5 rounded bg-stone-50 border border-stone-150 hover:bg-stone-100 transition-colors cursor-pointer"
                     >
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-mono font-bold text-stone-900">{order.id}</span>
                           <span className="font-semibold text-stone-800">{order.customer_name}</span>
+                      {orderRepeatMap?.get(String(order.id))?.isRepeat && (
+                        <span 
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200"
+                          title={`Repeat Customer: Order #${orderRepeatMap.get(String(order.id)).orderIndex} (${orderRepeatMap.get(String(order.id)).totalOrders} total orders)`}
+                        >
+                          <FiRepeat size={8} />
+                          {getRepeatLabel(orderRepeatMap.get(String(order.id)).orderIndex)}
+                        </span>
+                      )}
                         </div>
                         <span className="text-[10px] text-stone-400 block mt-0.5">
                           {delDate

@@ -1,11 +1,12 @@
 import React from 'react';
-import { FiCheckCircle, FiClock, FiXCircle } from 'react-icons/fi';
-import { isDeliveryExceptionOrder } from '../../utils/helpers';
+import { FiCheckCircle, FiClock, FiXCircle, FiRepeat } from 'react-icons/fi';
+import { isDeliveryExceptionOrder, getRepeatLabel } from '../../utils/helpers';
 
 export default function OrdersView({
   activeTab,
   filteredOrders,
   orders,
+  orderRepeatMap,
   setShowManualOrderModal,
   orderSearchQuery,
   setOrderSearchQuery,
@@ -150,7 +151,18 @@ export default function OrdersView({
                 >
                   <td className="p-4 font-bold text-stone-900">{order.id}</td>
                   <td className="p-4">
-                    <span className="font-bold text-stone-850 block">{order.customer_name}</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-stone-850 block">{order.customer_name}</span>
+                      {orderRepeatMap?.get(String(order.id))?.isRepeat && (
+                        <span 
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200"
+                          title={`Repeat Customer: Order #${orderRepeatMap.get(String(order.id)).orderIndex} from this phone number (${orderRepeatMap.get(String(order.id)).totalOrders} total orders)`}
+                        >
+                          <FiRepeat size={9} />
+                          {getRepeatLabel(orderRepeatMap.get(String(order.id)).orderIndex)}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[10px] text-stone-450 font-mono block mt-0.5">{order.phone}</span>
                     
                     {/* Sent messages indicators */}

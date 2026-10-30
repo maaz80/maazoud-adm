@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from './utils/supabase';
@@ -16,10 +16,12 @@ import {
   getOrderDeliveryDate,
   filterDeliveredOrdersByDate,
   isOrderInDateRange,
+  isCampaignInDateRange,
   getDateRangeBounds,
   getOrderStatus,
   isRtoOrder,
-  isDeliveryExceptionOrder
+  isDeliveryExceptionOrder,
+  getCustomerOrderStats
 } from './utils/helpers';
 
 // Components
@@ -2051,6 +2053,9 @@ export default function App() {
   const dashboardOrders = isDashboardDateFiltered 
     ? orders.filter(o => isOrderInDateRange(o, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd))
     : orders;
+  const dashboardAdCampaigns = isDashboardDateFiltered
+    ? adCampaigns.filter(c => isCampaignInDateRange(c, dashboardDateFilter, dashboardCustomStart, dashboardCustomEnd))
+    : adCampaigns;
   const dashboardNonCancelledOrders = dashboardOrders.filter(o => !['Cancelled', 'RTO'].includes(getOrderStatus(o)));
   const dashboardShipmentOrders = dashboardOrders.filter(o => getOrderStatus(o) !== 'Cancelled');
   const getDashboardShipmentCost = (order) => {
@@ -2080,16 +2085,22 @@ export default function App() {
   const dashboardCalculatedDeliveryTotal = Number(dashboardShipmentOrders.reduce((sum, order) => {
     return sum + getDashboardShipmentCost(order);
   }, 0).toFixed(2));
-  const dashboardCalculatedProfitTotal = Number(dashboardNonCancelledOrders.reduce((sum, o) => {
+  const dashboardCalculatedProfitTotal = Number(dashboardShipmentOrders.reduce((sum, o) => {
+    if (isRtoOrder(o)) {
+      return sum - getDashboardShipmentCost(o);
+    }
     const { profit, hasDeliveryCost } = calculateOrderProfit(o, products);
     return sum + (hasDeliveryCost ? profit : 0);
   }, 0).toFixed(2));
+
+  const orderRepeatMap = useMemo(() => getCustomerOrderStats(orders), [orders]);
 
   const filteredOrders = orders.filter(order => {
     const query = String(orderSearchQuery || '').toLowerCase().trim();
     const matchesSearch = String(order.id || '').toLowerCase().includes(query) ||
       String(order.customer_name || '').toLowerCase().includes(query) ||
-      String(order.phone || '').includes(query);
+      String(order.phone || '').includes(query) ||
+      (query === 'repeat' && orderRepeatMap.get(String(order.id))?.isRepeat);
     const matchesStatus = orderStatusFilter === 'All' || getOrderStatus(order) === orderStatusFilter;
 
     if (!matchesSearch || !matchesStatus) return false;
@@ -2197,6 +2208,7 @@ export default function App() {
                 orders={dashboardOrders}
                 allOrders={orders}
                 setSelectedOrder={setSelectedOrder}
+        orderRepeatMap={orderRepeatMap}
                 dashboardDeliveredFilter={dashboardDeliveredFilter}
                 setDashboardDeliveredFilter={setDashboardDeliveredFilter}
                 filterDeliveredOrdersByDate={filterDeliveredOrdersByDate}
@@ -2210,7 +2222,7 @@ export default function App() {
                 dashboardCustomEnd={dashboardCustomEnd}
                 setDashboardCustomEnd={setDashboardCustomEnd}
                 setShowAdsModal={setShowAdsModal}
-                adCampaigns={adCampaigns}
+                adCampaigns={dashboardAdCampaigns}
               />
             )}
 
@@ -2260,6 +2272,7 @@ export default function App() {
                 activeTab={activeTab}
                 filteredOrders={filteredOrders}
                 orders={orders}
+                orderRepeatMap={orderRepeatMap}
                 setShowManualOrderModal={setShowManualOrderModal}
                 orderSearchQuery={orderSearchQuery}
                 setOrderSearchQuery={setOrderSearchQuery}
@@ -2271,6 +2284,7 @@ export default function App() {
                 orderDeliveredSubFilter={orderDeliveredSubFilter}
                 setOrderDeliveredSubFilter={setOrderDeliveredSubFilter}
                 setSelectedOrder={setSelectedOrder}
+        orderRepeatMap={orderRepeatMap}
                 sentMessages={sentMessages}
                 requestOrderStatusUpdate={requestOrderStatusUpdate}
               />
@@ -2360,6 +2374,7 @@ export default function App() {
       <OrderDetailsModal
         selectedOrder={selectedOrder}
         setSelectedOrder={setSelectedOrder}
+        orderRepeatMap={orderRepeatMap}
         products={products}
         fetchProducts={fetchProducts}
         getOrderDeliveryDate={getOrderDeliveryDate}
@@ -2470,7 +2485,7 @@ export default function App() {
         calculatedSalesTotal={dashboardCalculatedSalesTotal}
         calculatedDeliveryTotal={dashboardCalculatedDeliveryTotal}
         calculatedProfitTotal={dashboardCalculatedProfitTotal}
-        adCampaigns={adCampaigns}
+        adCampaigns={dashboardAdCampaigns}
         inlineEditingCell={inlineEditingCell}
         setInlineEditingCell={setInlineEditingCell}
         inlineEditValue={inlineEditValue}
@@ -2492,6 +2507,7 @@ export default function App() {
         getOrderDeliveryDate={getOrderDeliveryDate}
         handleDownloadDeliveredReport={handleDownloadDeliveredReport}
         setSelectedOrder={setSelectedOrder}
+        orderRepeatMap={orderRepeatMap}
       />
 
       <FinancialModal

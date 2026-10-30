@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { calculateOrderProfit, isRtoOrder } from '../../utils/helpers';
 
 export default function ProfitListModal({
@@ -28,7 +28,7 @@ export default function ProfitListModal({
   const isAfterAdsMode = mode === 'after_ads';
   const isShipmentCostMode = mode === 'shipment_cost';
   const isTotalProfitMode = mode === 'total_profit';
-  const includesRtoOrders = isShipmentCostMode || isTotalProfitMode;
+  const includesRtoOrders = isShipmentCostMode || isTotalProfitMode || isAfterAdsMode;
   const ordersToShow = includesRtoOrders
     ? shipmentOrders.filter(order => rtoFilter === 'all' || (rtoFilter === 'rto' ? isRtoOrder(order) : !isRtoOrder(order)))
     : nonCancelledOrders;
@@ -66,7 +66,7 @@ export default function ProfitListModal({
   const displayDeliveryTotal = includesRtoOrders
     ? ordersToShow.reduce((total, order) => total + getOrderDeliveryCharge(order), 0)
     : calculatedDeliveryTotal;
-  const totalProfitForTotalModal = isTotalProfitMode
+  const totalProfitCalculated = (isTotalProfitMode || isAfterAdsMode)
     ? ordersToShow.reduce((total, order) => {
         if (isRtoOrder(order)) return total - getRtoDeliveryCharge(order).charge;
         const { profit, hasDeliveryCost } = calculateOrderProfit(order, products);
@@ -314,11 +314,11 @@ export default function ProfitListModal({
             <span className="text-xs font-bold text-[#8c6239]">Total Sales: Rs. {formatAmount(displaySalesTotal)}</span>
             <span className="text-xs font-bold text-purple-700">Total Delivery Cost: Rs. {formatAmount(displayDeliveryTotal)}</span>
             {isAfterAdsMode ? <>
-              <span className="text-xs font-bold text-stone-600">Profit Before Ads: Rs. {calculatedProfitTotal}</span>
+              <span className="text-xs font-bold text-stone-600">Profit Before Ads: Rs. {formatAmount(totalProfitCalculated)}</span>
               <span className="text-xs font-bold text-amber-700">Ad Spend: Rs. {formatAmount(totalAdSpend)}</span>
-              <span className="text-xs font-bold text-green-700">Profit After Ads: Rs. {formatAmount(calculatedProfitTotal - totalAdSpend)}</span>
+              <span className="text-xs font-bold text-green-700">Profit After Ads: Rs. {formatAmount(totalProfitCalculated - totalAdSpend)}</span>
             </> : !isShipmentCostMode ? (
-              <span className="text-xs font-bold text-green-700">Total Net Profit: Rs. {formatAmount(totalProfitForTotalModal)}</span>
+              <span className="text-xs font-bold text-green-700">Total Net Profit: Rs. {formatAmount(totalProfitCalculated)}</span>
             ) : null}
           </div>
           <button

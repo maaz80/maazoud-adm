@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { FiCheckCircle } from 'react-icons/fi';
-import { getWhatsAppLink, getCourierTrackingUrl, isDeliveryExceptionOrder } from '../../utils/helpers';
+import { FiCheckCircle, FiRepeat } from 'react-icons/fi';
+import { getWhatsAppLink, getCourierTrackingUrl, isDeliveryExceptionOrder, getRepeatLabel } from '../../utils/helpers';
 import { supabase } from '../../utils/supabase';
 
 const isVariantAvailable = (product, size) => {
@@ -16,6 +16,7 @@ const isVariantAvailable = (product, size) => {
 export default function OrderDetailsModal({
   selectedOrder,
   setSelectedOrder,
+  orderRepeatMap,
   products = [],
   fetchProducts,
   getOrderDeliveryDate,
@@ -275,7 +276,20 @@ export default function OrderDetailsModal({
               <div className="bg-stone-50 p-4 rounded border border-stone-200 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 <div>
                   <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block mb-0.5">Name</span>
-                  <span className="font-semibold text-stone-900 block">{selectedOrder.customer_name}</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-stone-900 block">{selectedOrder.customer_name}</span>
+                    {orderRepeatMap?.get(String(selectedOrder.id))?.isRepeat && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200">
+                        <FiRepeat size={10} />
+                        {getRepeatLabel(orderRepeatMap.get(String(selectedOrder.id)).orderIndex)}
+                      </span>
+                    )}
+                  </div>
+                  {orderRepeatMap?.get(String(selectedOrder.id))?.totalOrders > 1 && (
+                    <span className="text-[10px] text-purple-700 font-semibold block mt-1">
+                      ✨ Total {orderRepeatMap.get(String(selectedOrder.id)).totalOrders} orders placed by this customer.
+                    </span>
+                  )}
                 </div>
                 <div>
                   <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block mb-0.5">Phone Number</span>

@@ -419,6 +419,29 @@ export const isOrderInDateRange = (order, filterType, customStart, customEnd) =>
   return true;
 };
 
+export const isCampaignInDateRange = (campaign, filterType, customStart, customEnd) => {
+  if (!filterType || filterType === 'all') return true;
+  const { start, end } = getDateRangeBounds(filterType, customStart, customEnd);
+  if (!start && !end) return true;
+
+  const rawDate = campaign?.ad_date || campaign?.date || campaign?.created_at;
+  if (!rawDate) return false;
+
+  let campTime;
+  const str = String(rawDate).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    const [y, m, d] = str.split('-').map(Number);
+    campTime = new Date(y, m - 1, d, 12, 0, 0, 0).getTime();
+  } else {
+    campTime = new Date(str).getTime();
+  }
+
+  if (isNaN(campTime)) return false;
+  if (start && campTime < start.getTime()) return false;
+  if (end && campTime > end.getTime()) return false;
+  return true;
+};
+
 export const getCourierTrackingUrl = (courierName = '', awb = '') => {
   if (!awb) return 'https://track.zipypost.com';
   const c = String(courierName || '').toLowerCase().trim();
@@ -468,3 +491,81 @@ export const getCourierTrackingUrl = (courierName = '', awb = '') => {
   return `https://track.zipypost.com`;
 };
 
+export const normalizePhone = (phone) => {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length < 7) return '';
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return digits.slice(1);
+  }
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+};
+
+export const normalizeCustomerName = (name) => {
+  return String(name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+};
+
+export const isZeroPhone = (phone) => {
+  if (!phone) return true;
+  const digits = String(phone).replace(/\D/g, '');
+  return digits.length === 0 || /^0+$/.test(digits);
+};
+
+export const getCustomerIdentifier = (order) => {
+  const rawPhone = String(order?.phone || '').trim();
+  const normPhone = normalizePhone(rawPhone);
+
+  // If phone is missing, invalid, or all zeros ('0000000000' for offline orders), match by customer name
+  if (!normPhone || isZeroPhone(rawPhone) || isZeroPhone(normPhone)) {
+    const normName = normalizeCustomerName(order?.customer_name);
+    if (!normName || normName === 'customer' || normName === 'n/a' || normName === 'offline' || normName === 'self') {
+      return null;
+    }
+    return `name:${normName}`;
+  }
+
+  return `phone:${normPhone}`;
+};
+
+export const getCustomerOrderStats = (orders = []) => {
+  const customerOrdersMap = new Map();
+
+  (orders || []).forEach((order) => {
+    const idKey = getCustomerIdentifier(order);
+    if (!idKey) return;
+    if (!customerOrdersMap.has(idKey)) {
+      customerOrdersMap.set(idKey, []);
+    }
+    customerOrdersMap.get(idKey).push(order);
+  });
+
+  const orderRepeatMap = new Map();
+
+  customerOrdersMap.forEach((list) => {
+    list.sort((a, b) => {
+      const timeA = new Date(a.created_at || 0).getTime();
+      const timeB = new Date(b.created_at || 0).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    });
+
+    list.forEach((order, index) => {
+      orderRepeatMap.set(String(order.id), {
+        isRepeat: index > 0,
+        orderIndex: index + 1,
+        totalOrders: list.length,
+      });
+    });
+  });
+
+  return orderRepeatMap;
+};
+
+export const getRepeatLabel = (orderIndex) => {
+  if (orderIndex === 2) return 'Repeat-2nd';
+  if (orderIndex === 3) return 'Repeat-3rd';
+  return `Repeat-${orderIndex}th`;
+};

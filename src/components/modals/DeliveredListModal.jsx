@@ -1,5 +1,6 @@
 import React from 'react';
-import { FiCheckCircle, FiPackage, FiTrendingUp, FiStar } from 'react-icons/fi';
+import { FiCheckCircle, FiPackage, FiTrendingUp, FiStar, FiRepeat } from 'react-icons/fi';
+import { getRepeatLabel } from '../../utils/helpers';
 
 export default function DeliveredListModal({
   showDeliveredListModal,
@@ -14,7 +15,8 @@ export default function DeliveredListModal({
   filterDeliveredOrdersByDate,
   getOrderDeliveryDate,
   handleDownloadDeliveredReport,
-  setSelectedOrder
+  setSelectedOrder,
+  orderRepeatMap
 }) {
   React.useEffect(() => {
     if (showDeliveredListModal) setDeliveredDateFilter('today');
@@ -203,7 +205,18 @@ export default function DeliveredListModal({
                           )}
                         </td>
                         <td className="p-3">
-                          <span className="font-bold text-stone-900 block">{order.customer_name || 'N/A'}</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-stone-900 block">{order.customer_name || 'N/A'}</span>
+                            {orderRepeatMap?.get(String(order.id))?.isRepeat && (
+                              <span 
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200"
+                                title={`Repeat Customer: Order #${orderRepeatMap.get(String(order.id)).orderIndex} from this phone number (${orderRepeatMap.get(String(order.id)).totalOrders} total orders)`}
+                              >
+                                <FiRepeat size={9} />
+                                {getRepeatLabel(orderRepeatMap.get(String(order.id)).orderIndex)}
+                              </span>
+                            )}
+                          </div>
                           <span className="text-[10px] font-mono text-stone-500 block">{order.phone}</span>
                           <span className="text-[9px] text-stone-400 block truncate max-w-xs" title={order.address}>{order.address}</span>
                         </td>
