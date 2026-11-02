@@ -11,7 +11,7 @@ import {
   FiCreditCard,
   FiXCircle
 } from 'react-icons/fi';
-import { calculateOrderProfit, getCurrentCourierStatusText, getOrderStatus } from '../../utils/helpers';
+import { calculateOrderProfit, getCurrentCourierStatusText, getOrderStatus, getRtoStage, isRtoOfdOrder } from '../../utils/helpers';
 
 const parseRtoDate = (value) => {
   if (!value) return null;
@@ -169,15 +169,7 @@ export default function StoreMetricsModal({
     return (orders || []).filter(order => getOrderStatus(order) === 'Exception');
   }, [orders]);
 
-  const getRtoStage = (order) => {
-    const statusText = getCurrentCourierStatusText(order);
-    if (/\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr|out for delivery)\b/.test(statusText)) return 'other';
-    if (/\b(?:rto|return|returned)\b.*\bdelivered\b|\bdelivered\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'delivered';
-    if (/\b(?:rto|return|returned)\b.*\bin transit\b|\bin transit\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'in_transit';
-    if (/\brto notified\b|\breturn notified\b/.test(statusText)) return 'in_transit';
-    return 'other';
-  };
-
+  
   const rtoOrders = useMemo(() => {
     return (orders || []).filter(order => getOrderStatus(order) === 'RTO');
   }, [orders]);
@@ -285,6 +277,11 @@ export default function StoreMetricsModal({
     modalSubtitle = `Returned shipments delivered back to sender (${rtoOrders.filter(order => getRtoStage(order) === 'delivered').length} Orders)`;
     icon = <FiCheckCircle className="text-emerald-700" size={18} />;
     iconBg = 'bg-emerald-100 border-emerald-200';
+  } else if (modalType === 'rto_ofd') {
+    modalTitle = 'RTO Out For Delivery Orders';
+    modalSubtitle = `Returned shipments out for delivery back to sender (${rtoOrders.filter(order => getRtoStage(order) === 'ofd').length} Orders)`;
+    icon = <FiTruck className="text-purple-700" size={18} />;
+    iconBg = 'bg-purple-100 border-purple-200';
   }
 
   return (
@@ -1659,7 +1656,7 @@ export default function StoreMetricsModal({
             );
           })()}
 
-          {['rto_orders', 'rto_in_transit', 'rto_delivered'].includes(modalType) && (() => {
+          {['rto_orders', 'rto_in_transit', 'rto_delivered', 'rto_ofd'].includes(modalType) && (() => {
             const q = searchQuery.toLowerCase().trim();
             const chargesByAwb = financialSummary?.zipypost?.rto_charges_by_awb || {};
             const formatMoney = (amount) => Number(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1667,7 +1664,9 @@ export default function StoreMetricsModal({
               ? rtoOrders.filter(order => getRtoStage(order) === 'in_transit')
               : modalType === 'rto_delivered'
                 ? rtoOrders.filter(order => getRtoStage(order) === 'delivered')
-                : rtoOrders;
+                : modalType === 'rto_ofd'
+                  ? rtoOrders.filter(order => getRtoStage(order) === 'ofd')
+                  : rtoOrders;
             const rtoSequenceByOrderId = new Map();
             const datedRtoOrders = stageFilteredOrders
               .map((order, index) => ({ order, index, date: getRtoInTransitAt(order) }))
@@ -1708,7 +1707,9 @@ export default function StoreMetricsModal({
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div className="bg-orange-50 border border-orange-200 p-3.5 rounded">
-                    <span className="text-[10px] uppercase font-bold text-orange-700 tracking-wider block">RTO Orders</span>
+                    <span className="text-[10px] uppercase font-bold text-orange-700 tracking-wider block">
+                    {modalType === 'rto_ofd' ? 'RTO OFD Orders' : modalType === 'rto_in_transit' ? 'In Transit RTO' : modalType === 'rto_delivered' ? 'Delivered RTO' : 'RTO Orders'}
+                  </span>
                     <h4 className="text-xl font-bold text-orange-900 mt-1">{filtered.length}</h4>
                   </div>
                   <div className="bg-stone-50 border border-stone-200 p-3.5 rounded">

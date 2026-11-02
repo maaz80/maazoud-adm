@@ -48,6 +48,25 @@ export const isDeliveryExceptionOrder = (order) => {
   return /\b(exception|delivery attempt|attempted|undelivered|not delivered|failed delivery|ndr)\b/.test(currentStatus);
 };
 
+export const isRtoOfdOrder = (order) => {
+  const statusText = getCurrentCourierStatusText(order);
+  const zipyStatus = String(order?.shipment_details?.zipypost_status || '').toLowerCase();
+  const trackingStatus = String(order?.shipment_details?.zipypost_tracking_info?.status || order?.shipment_details?.zipypost_tracking_info?.current_status || '').toLowerCase();
+  return /\brto\s*[-_]?\s*ofd\b|\bdispatched for rto\b|\brto out for delivery\b|\bout for return\b/.test(statusText)
+    || /\brto\s*[-_]?\s*ofd\b|\bdispatched for rto\b/.test(zipyStatus)
+    || /\brto\s*[-_]?\s*ofd\b|\bdispatched for rto\b/.test(trackingStatus)
+    || (/\brto\b/.test(statusText) && /\b(?:out for delivery|ofd)\b/.test(statusText));
+};
+
+export const getRtoStage = (order) => {
+  const statusText = getCurrentCourierStatusText(order);
+  if (isRtoOfdOrder(order)) return 'ofd';
+  if (/\b(?:rto|return|returned)\b.*\bdelivered\b|\bdelivered\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'delivered';
+  if (/\b(?:rto|return|returned)\b.*\bin transit\b|\bin transit\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'in_transit';
+  if (/\brto notified\b|\breturn notified\b/.test(statusText)) return 'in_transit';
+  return 'other';
+};
+
 export const getOrderStatus = (order) => {
   const status = String(order?.status || '').toLowerCase();
   if (status === 'cancelled' || status === 'canceled') return 'Cancelled';
