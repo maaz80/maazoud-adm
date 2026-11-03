@@ -21,7 +21,10 @@ import {
   getOrderStatus,
   isRtoOrder,
   isDeliveryExceptionOrder,
-  getCustomerOrderStats
+  getCustomerOrderStats,
+  getRtoDeliveredAt,
+  filterRtoDeliveredOrdersByDate,
+  getRtoStage
 } from './utils/helpers';
 
 // Components
@@ -48,6 +51,7 @@ import DeliveredListModal from './components/modals/DeliveredListModal';
 import FinancialModal from './components/modals/FinancialModal';
 import ManualOrderModal from './components/modals/ManualOrderModal';
 import AdsManagerModal from './components/modals/AdsManagerModal';
+import DeliveryNotificationToasts from './components/common/DeliveryNotificationToasts';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -59,6 +63,8 @@ export default function App() {
   const [loginStep, setLoginStep] = useState('email');
   const [authError, setAuthError] = useState('');
   const [authSuccessMsg, setAuthSuccessMsg] = useState('');
+  const [deliveryToasts, setDeliveryToasts] = useState([]);
+  const hasTriggeredDeliveryToasts = useRef(false);
 
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
@@ -87,6 +93,7 @@ export default function App() {
   });
   const [dbLoading, setDbLoading] = useState(false);
   const hasLoadedInitialData = useRef(false);
+  const loadedTabsRef = useRef(new Set(['dashboard']));
 
   // Financial summary & modal states
   const [financialSummary, setFinancialSummary] = useState(null);
@@ -100,7 +107,7 @@ export default function App() {
   const [showDeliveredListModal, setShowDeliveredListModal] = useState(false);
   const [deliveredDateFilter, setDeliveredDateFilter] = useState('today');
   const [deliveredSearchQuery, setDeliveredSearchQuery] = useState('');
-  const [dashboardDeliveredFilter, setDashboardDeliveredFilter] = useState('yesterday');
+  const [dashboardDeliveredFilter, setDashboardDeliveredFilter] = useState('today');
   const [dashboardDateFilter, setDashboardDateFilter] = useState('all');
   const [dashboardCustomStart, setDashboardCustomStart] = useState('');
   const [dashboardCustomEnd, setDashboardCustomEnd] = useState('');
@@ -331,28 +338,49 @@ export default function App() {
     setUser(null);
     setLoginStep('email');
     setLoginOtp('');
+    hasLoadedInitialData.current = false;
+    loadedTabsRef.current = new Set(['dashboard']);
   };
 
   const fetchDatabaseData = async () => {
     setDbLoading(true);
     try {
-      await Promise.all([
+      // 🚀 PHASE 1: Critical Core Data (Dashboard, Orders, Products, Categories, Ads)
+      // Loads in ~250-400ms from Supabase directly and unblocks the full UI immediately!
+      await Promise.allSettled([
         fetchCategories(),
         fetchProducts(),
         fetchOrders(),
-        fetchBanners(),
-        fetchBlogs(),
-        fetchTestimonials(),
-        fetchFinancialSummary(),
-        fetchLeads(),
-        fetchAdCampaigns(),
-        fetchExpenses()
+        fetchAdCampaigns()
       ]);
     } catch (err) {
-      console.error("Failed to load initial database content:", err);
+      console.error("Failed to load core database content:", err);
     } finally {
+      // Screen unblocks immediately! User sees dashboard, cards, recent orders without waiting.
       setDbLoading(false);
     }
+
+    // 🚀 PHASE 2: Background Financial Summary (Non-blocking)
+    // Run external courier/reconciliation API in background without freezing UI
+    fetchFinancialSummary().catch(err => console.error("Background financial summary error:", err));
+
+    // 🚀 PHASE 3: Background Secondary Preload (Idle Staggered)
+    // Preload remaining tabs silently in background after initial dashboard render has settled
+    setTimeout(() => {
+      Promise.allSettled([
+        fetchExpenses(),
+        fetchLeads(),
+        fetchBanners(),
+        fetchBlogs(),
+        fetchTestimonials()
+      ]).then(() => {
+        loadedTabsRef.current.add('expenses');
+        loadedTabsRef.current.add('leads');
+        loadedTabsRef.current.add('banners');
+        loadedTabsRef.current.add('blogs');
+        loadedTabsRef.current.add('testimonials');
+      }).catch(err => console.error("Secondary preload error:", err));
+    }, 700);
   };
 
   const loadInitialDatabaseData = () => {
@@ -360,6 +388,27 @@ export default function App() {
     hasLoadedInitialData.current = true;
     fetchDatabaseData();
   };
+
+  // 🚀 Progressive On-Demand Fetcher: When user navigates to a tab before background preload finishes
+  useEffect(() => {
+    if (!user) return;
+    if (activeTab === 'expenses' && !loadedTabsRef.current.has('expenses')) {
+      loadedTabsRef.current.add('expenses');
+      fetchExpenses();
+    } else if (activeTab === 'leads' && !loadedTabsRef.current.has('leads')) {
+      loadedTabsRef.current.add('leads');
+      fetchLeads();
+    } else if (activeTab === 'banners' && !loadedTabsRef.current.has('banners')) {
+      loadedTabsRef.current.add('banners');
+      fetchBanners();
+    } else if (activeTab === 'blogs' && !loadedTabsRef.current.has('blogs')) {
+      loadedTabsRef.current.add('blogs');
+      fetchBlogs();
+    } else if (activeTab === 'testimonials' && !loadedTabsRef.current.has('testimonials')) {
+      loadedTabsRef.current.add('testimonials');
+      fetchTestimonials();
+    }
+  }, [activeTab, user]);
 
   const calculateLocalFinancialSummary = (allOrders = orders) => {
     const nonCancelled = (allOrders || []).filter(o => {
@@ -1071,7 +1120,7 @@ export default function App() {
       price6mloffer: price6mlOffer,
       description: formattedDesc,
       is_out_of_stock: Boolean(newProduct.isOutOfStock),
-      in_stock: !Boolean(newProduct.isOutOfStock),
+      in_stock: !newProduct.isOutOfStock,
       is_out_of_stock_3ml: isOutOfStock3ml,
       in_stock_3ml: !isOutOfStock3ml,
       is_out_of_stock_6ml: isOutOfStock6ml,
@@ -2009,6 +2058,23 @@ export default function App() {
   const nonCancelledOrders = orders.filter(o => !['Cancelled', 'RTO'].includes(getOrderStatus(o)));
   const allDeliveredOrders = orders.filter(o => getOrderStatus(o) === 'Delivered');
   const allRtoOrders = orders.filter(o => getOrderStatus(o) === 'RTO');
+  const allRtoDeliveredOrders = orders.filter(o => getOrderStatus(o) === 'RTO' && getRtoStage(o) === 'delivered');
+
+  const rtoDeliveredCounts = {
+    all: allRtoDeliveredOrders.length,
+    today: filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'today').length,
+    yesterday: filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'yesterday').length,
+    last7days: filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'last7days').length,
+    thisMonth: filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'thisMonth').length,
+  };
+
+  const rtoDeliveredRevenues = {
+    all: filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'all').reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0),
+    today: filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'today').reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0),
+    yesterday: filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'yesterday').reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0),
+    last7days: filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'last7days').reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0),
+    thisMonth: filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'thisMonth').reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0),
+  };
 
   const orderStatusCounts = {
     All: orders.length,
@@ -2047,6 +2113,50 @@ export default function App() {
     const { profit, hasDeliveryCost } = calculateOrderProfit(o, products);
     return sum + (hasDeliveryCost ? profit : 0);
   }, 0).toFixed(2));
+
+  // 🔔 Trigger delivery notification toasts for today's delivered orders whenever admin is opened
+  useEffect(() => {
+    if (hasTriggeredDeliveryToasts.current) return;
+    if (!orders || orders.length === 0) return;
+
+    const normalDeliveredToday = filterDeliveredOrdersByDate(allDeliveredOrders, 'today');
+    const rtoDeliveredToday = filterRtoDeliveredOrdersByDate(allRtoDeliveredOrders, 'today');
+
+    if (normalDeliveredToday.length > 0 || rtoDeliveredToday.length > 0) {
+      hasTriggeredDeliveryToasts.current = true;
+      const initialToasts = [
+        ...normalDeliveredToday.map((order, idx) => ({
+          id: `norm-del-${order.id}-${idx}`,
+          type: 'normal',
+          order
+        })),
+        ...rtoDeliveredToday.map((order, idx) => ({
+          id: `rto-del-${order.id}-${idx}`,
+          type: 'rto',
+          order
+        }))
+      ];
+      setDeliveryToasts(initialToasts);
+    }
+  }, [orders, allDeliveredOrders, allRtoDeliveredOrders]);
+
+  const handleDismissDeliveryToast = (toastId) => {
+    setDeliveryToasts(prev => prev.filter(t => t.id !== toastId));
+  };
+
+  // Exposed helper for testing delivery toasts anytime in console
+  useEffect(() => {
+    window.__triggerDeliveryToasts = (customOrders = null) => {
+      const ordersToUse = customOrders || orders;
+      const sampleNormal = ordersToUse.filter(o => getOrderStatus(o) === 'Delivered').slice(0, 3);
+      const sampleRto = ordersToUse.filter(o => getOrderStatus(o) === 'RTO').slice(0, 2);
+      const testList = [
+        ...sampleNormal.map((order, idx) => ({ id: `test-norm-${order.id || idx}-${Date.now() + idx}`, type: 'normal', order })),
+        ...sampleRto.map((order, idx) => ({ id: `test-rto-${order.id || idx}-${Date.now() + idx}`, type: 'rto', order }))
+      ];
+      setDeliveryToasts(testList);
+    };
+  }, [orders]);
 
   // Dashboard date-filtered orders and calculations
   const isDashboardDateFiltered = dashboardDateFilter && dashboardDateFilter !== 'all';
@@ -2206,6 +2316,7 @@ export default function App() {
                 setShowManualOrderModal={setShowManualOrderModal}
                 products={products}
                 orders={dashboardOrders}
+                setOrders={setOrders}
                 allOrders={orders}
                 setSelectedOrder={setSelectedOrder}
         orderRepeatMap={orderRepeatMap}
@@ -2284,7 +2395,6 @@ export default function App() {
                 orderDeliveredSubFilter={orderDeliveredSubFilter}
                 setOrderDeliveredSubFilter={setOrderDeliveredSubFilter}
                 setSelectedOrder={setSelectedOrder}
-        orderRepeatMap={orderRepeatMap}
                 sentMessages={sentMessages}
                 requestOrderStatusUpdate={requestOrderStatusUpdate}
               />
@@ -2503,6 +2613,9 @@ export default function App() {
         deliveredCounts={deliveredCounts}
         deliveredRevenues={deliveredRevenues}
         allDeliveredOrders={allDeliveredOrders}
+        allRtoDeliveredOrders={allRtoDeliveredOrders}
+        rtoDeliveredCounts={rtoDeliveredCounts}
+        rtoDeliveredRevenues={rtoDeliveredRevenues}
         filterDeliveredOrdersByDate={filterDeliveredOrdersByDate}
         getOrderDeliveryDate={getOrderDeliveryDate}
         handleDownloadDeliveredReport={handleDownloadDeliveredReport}
@@ -2558,6 +2671,13 @@ export default function App() {
           financialSummary={financialSummary}
         />
       )}
+
+      {/* 🚚 Custom Delivery Notification Toasts (Normal top-right, RTO top-left, 5s auto-dismiss) */}
+      <DeliveryNotificationToasts
+        toasts={deliveryToasts}
+        onDismiss={handleDismissDeliveryToast}
+        onSelectOrder={setSelectedOrder}
+      />
     </div>
   );
 }

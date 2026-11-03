@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { supabase } from '../../utils/supabase';
 import {
   FiList,
   FiClock,
@@ -16,9 +17,10 @@ import {
   FiAlertCircle,
   FiCalendar,
   FiTarget,
-  FiRepeat
+  FiRepeat,
+  FiAlertTriangle
 } from 'react-icons/fi';
-import { calculateOrderProfit, isOrderInDateRange, getCurrentCourierStatusText, getOrderStatus, getRepeatLabel, getDateRangeBounds, getRtoStage, isRtoOfdOrder } from '../../utils/helpers';
+import { calculateOrderProfit, isOrderInDateRange, getCurrentCourierStatusText, getOrderStatus, getRepeatLabel, getDateRangeBounds, getRtoStage, isRtoOfdOrder, getRtoDeliveredAt, filterRtoDeliveredOrdersByDate } from '../../utils/helpers';
 import StoreMetricsModal from '../modals/StoreMetricsModal';
 
 const formatApprox = (val) => Math.round(parseFloat(val) || 0).toLocaleString('en-IN');
@@ -46,6 +48,7 @@ export default function DashboardView({
   setShowManualOrderModal,
   products = [],
   orders = [],
+  setOrders,
   setSelectedOrder,
   orderRepeatMap,
   dashboardDeliveredFilter,
@@ -64,6 +67,7 @@ export default function DashboardView({
   adCampaigns = []
 }) {
   const [storeMetricModalType, setStoreMetricModalType] = useState(null);
+  const [dashboardLedgerType, setDashboardLedgerType] = useState('delivered'); // 'delivered' | 'rto'
 
   const isDateFiltered = Boolean(dashboardDateFilter && dashboardDateFilter !== 'all');
 
@@ -162,6 +166,47 @@ export default function DashboardView({
   const exceptionOrders = (orders || []).filter(order => getOrderStatus(order) === 'Exception');
   const rtoInTransitOrders = rtoOrders.filter(order => getRtoStage(order) === 'in_transit');
   const rtoDeliveredOrders = rtoOrders.filter(order => getRtoStage(order) === 'delivered');
+  const fakeRtoDeliveredOrders = (orders || []).filter(order => {
+    const isRto = getOrderStatus(order) === 'RTO' && getRtoStage(order) === 'delivered';
+    return isRto && Boolean(order.is_fake_rto || order.shipment_details?.is_fake_rto);
+  });
+
+  const handleToggleFakeRto = async (order) => {
+    const currentFake = Boolean(order.is_fake_rto || order.shipment_details?.is_fake_rto);
+    const newFake = !currentFake;
+    const updatedShipment = {
+      ...(order.shipment_details || {}),
+      is_fake_rto: newFake,
+      fake_rto_marked_at: newFake ? new Date().toISOString() : null
+    };
+
+    if (setOrders) {
+      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, is_fake_rto: newFake, shipment_details: updatedShipment } : o));
+    }
+
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({ shipment_details: updatedShipment })
+        .eq('id', order.id);
+
+      if (error) {
+        console.error('Failed to update Fake RTO in Supabase:', error);
+        alert('Could not update Fake RTO status: ' + error.message);
+        if (setOrders) {
+          setOrders(prev => prev.map(o => o.id === order.id ? { ...o, is_fake_rto: currentFake, shipment_details: order.shipment_details } : o));
+        }
+      }
+    } catch (err) {
+      console.error('Error updating Fake RTO in Supabase:', err);
+      if (setOrders) {
+        setOrders(prev => prev.map(o => o.id === order.id ? { ...o, is_fake_rto: currentFake, shipment_details: order.shipment_details } : o));
+      }
+    }
+  };
+
+  const rtoDeliveredCounts = {};
+  const rtoDeliveredRevenues = {};
   const rtoOfdOrders = rtoOrders.filter(order => getRtoStage(order) === 'ofd');
   const nonCancelledOrders = (orders || []).filter(o => !['Cancelled', 'RTO'].includes(getOrderStatus(o)));
   const zipypostRtoCharges = financialSummary?.zipypost?.rto_charges_by_awb || {};
@@ -200,20 +245,20 @@ export default function DashboardView({
   const razorpaySettledAmount = isDateFiltered
     ? (isRzpApiConnected && rzpSettledFilteredSum > 0 ? rzpSettledFilteredSum : localRzpSettledSum)
     : (isRzpApiConnected
-        ? (financialSummary?.razorpay?.total_settled ?? localRzpSettledSum)
-        : (financialSummary?.local_metrics?.prepaid_delivered_total ?? localRzpSettledSum));
+      ? (financialSummary?.razorpay?.total_settled ?? localRzpSettledSum)
+      : (financialSummary?.local_metrics?.prepaid_delivered_total ?? localRzpSettledSum));
 
   const razorpayPendingAmount = isDateFiltered
     ? (isRzpApiConnected && rzpPendingFilteredSum > 0 ? rzpPendingFilteredSum : localRzpPendingSum)
     : (isRzpApiConnected
-        ? (financialSummary?.razorpay?.unsettled_balance ?? localRzpPendingSum)
-        : (((financialSummary?.local_metrics?.prepaid_shipped_total || 0) + (financialSummary?.local_metrics?.prepaid_processing_total || 0)) || localRzpPendingSum));
+      ? (financialSummary?.razorpay?.unsettled_balance ?? localRzpPendingSum)
+      : (((financialSummary?.local_metrics?.prepaid_shipped_total || 0) + (financialSummary?.local_metrics?.prepaid_processing_total || 0)) || localRzpPendingSum));
 
   const razorpayTotalCaptured = isDateFiltered
     ? localRzpTotalSum
     : (isRzpApiConnected
-        ? (financialSummary?.razorpay?.total_captured ?? localRzpTotalSum)
-        : (financialSummary?.local_metrics?.prepaid_razorpay_total ?? localRzpTotalSum));
+      ? (financialSummary?.razorpay?.total_captured ?? localRzpTotalSum)
+      : (financialSummary?.local_metrics?.prepaid_razorpay_total ?? localRzpTotalSum));
 
   const settledPercentage = razorpayTotalCaptured > 0
     ? Math.min(100, Math.round((razorpaySettledAmount / razorpayTotalCaptured) * 100))
@@ -279,7 +324,7 @@ export default function DashboardView({
   const localCodShippedSum = codShippedOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
   const localCodProcessingSum = codProcessingOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
 
-  const localCodDeliveredRemittedSum = codDeliveredOrders.filter(o => 
+  const localCodDeliveredRemittedSum = codDeliveredOrders.filter(o =>
     Boolean(o.is_paid) ||
     Boolean(o.cod_remitted) ||
     String(o.payment_status || '').toLowerCase() === 'paid' ||
@@ -287,7 +332,7 @@ export default function DashboardView({
     Boolean(o.shipment_details?.is_paid)
   ).reduce((sum, o) => sum + (parseFloat(o.total_amount) || 0), 0);
 
-  const localCodDeliveredPendingSum = codDeliveredOrders.filter(o => 
+  const localCodDeliveredPendingSum = codDeliveredOrders.filter(o =>
     !Boolean(o.is_paid) &&
     !Boolean(o.cod_remitted) &&
     String(o.payment_status || '').toLowerCase() !== 'paid' &&
@@ -509,7 +554,7 @@ export default function DashboardView({
             </div>
           </div>
 
-          <div 
+          <div
             onClick={() => {
               setDeliveredDateFilter('all');
               setShowDeliveredListModal(true);
@@ -532,7 +577,7 @@ export default function DashboardView({
             </div>
           </div>
 
-          <div 
+          <div
             onClick={() => setShowSalesListModal(true)}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-[#8c6239] transition-all hover:bg-stone-50/80"
             title="Click to view all sales orders"
@@ -547,7 +592,7 @@ export default function DashboardView({
             </div>
           </div>
 
-          <div 
+          <div
             onClick={() => {
               setProfitListModalMode?.('total_profit');
               setShowProfitListModal(true);
@@ -576,7 +621,7 @@ export default function DashboardView({
             </div>
             <div>
               <h3 className="text-xl font-bold text-orange-800">
-                {rtoLedgerLoaded ? `Rs. ${rtoLossActual.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : loadingFinancials ? 'Loading ledger…' : 'Ledger unavailable'}
+                {rtoLedgerLoaded ? `Rs. ${rtoLossActual.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : loadingFinancials ? 'Loading...' : 'Ledger unavailable'}
               </h3>
               <p className="text-[9px] text-orange-700 font-semibold mt-0.5 uppercase tracking-wide">
                 {rtoBilledOrders.length} billed · {rtoPendingOrders.length} pending · details &rarr;
@@ -616,7 +661,7 @@ export default function DashboardView({
           </div>
 
           {/* RTO OFD (Out For Delivery) Metric Box */}
-          <div 
+          <div
             onClick={() => setStoreMetricModalType('rto_ofd')}
             className="bg-white border border-purple-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-purple-500 transition-all hover:bg-purple-50/40 group"
             title="Click to view RTO shipments currently out for delivery back to sender"
@@ -648,28 +693,26 @@ export default function DashboardView({
             </div>
           </div>
 
-          <div 
-            onClick={() => {
-              setProfitListModalMode?.('shipment_cost');
-              setShowProfitListModal(true);
-            }}
-            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-purple-500 transition-all hover:bg-stone-50/80"
-            title="Click to view delivery cost breakdown"
+          {/* Box 12 in Row 1: Fake RTO Delivered */}
+          <div
+            onClick={() => setStoreMetricModalType('fake_rto_delivered')}
+            className="bg-white border border-rose-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-rose-500 transition-all hover:bg-rose-50/40 group"
+            title="Click to view Fake RTO Delivered orders"
           >
             <div className="flex justify-between items-start">
-              <span className="text-[9px] uppercase font-bold text-purple-600 tracking-wider">Shipment Cost</span>
-              <FiTruck className="text-purple-600" size={18} />
+              <span className="text-[9px] uppercase font-bold text-rose-700 tracking-wider">Fake RTO Delivered</span>
+              <FiAlertTriangle className="text-rose-600" size={18} />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-purple-600">Rs. {formatApprox(calculatedDeliveryTotal)}</h3>
-              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Courier &rarr;</p>
+              <h3 className="text-xl font-bold text-rose-800">{fakeRtoDeliveredOrders.length}</h3>
+              <p className="text-[9px] text-rose-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">View Flagged &rarr;</p>
             </div>
           </div>
         </div>
 
         {/* ROW 2: 6 SALES & PROFIT CHANNEL BOXES (OFFLINE, TOTAL COD, ONLINE) */}
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          
+
           {/* Box 1: Offline Sales */}
           <div
             onClick={() => setStoreMetricModalType('offline_sales')}
@@ -786,8 +829,8 @@ export default function DashboardView({
 
         </div>
 
-        {/* ROW 3: ADS, PROFIT & CANCELLED (3-COLUMN ROW) */}
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* ROW 4: ADS, PROFIT, CANCELLED & SHIPMENT COST (4-COLUMN ROW) */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
           {/* Box 7: Ads (Marketing Spend & Real Profit) */}
           <div
@@ -804,9 +847,8 @@ export default function DashboardView({
                 <h3 className="text-xl font-bold text-stone-900">
                   ₹ {formatApprox(adCampaignsStats.totalSpend)}
                 </h3>
-                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
-                  adCampaignsStats.totalProfit >= 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-rose-50 text-rose-700 border-rose-200'
-                }`}>
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${adCampaignsStats.totalProfit >= 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-rose-50 text-rose-700 border-rose-200'
+                  }`}>
                   {adCampaignsStats.totalProfit >= 0 ? '+' : ''}₹{formatApprox(adCampaignsStats.totalProfit)}
                 </span>
               </div>
@@ -831,9 +873,8 @@ export default function DashboardView({
             </div>
             <div>
               <div className="flex items-baseline justify-between">
-                <h3 className={`text-xl font-bold ${
-                  (calculatedProfitTotal - adCampaignsStats.totalSpend) >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                }`}>
+                <h3 className={`text-xl font-bold ${(calculatedProfitTotal - adCampaignsStats.totalSpend) >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                  }`}>
                   ₹ {formatApprox(calculatedProfitTotal - adCampaignsStats.totalSpend)}
                 </h3>
                 <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 uppercase">
@@ -847,7 +888,7 @@ export default function DashboardView({
           </div>
 
           {/* Cancelled Orders Metric Box */}
-          <div 
+          <div
             onClick={() => setStoreMetricModalType('cancelled_orders')}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-rose-600 transition-all hover:bg-stone-50/80 group"
             title="Click to view Cancelled Orders List"
@@ -864,12 +905,31 @@ export default function DashboardView({
             </div>
           </div>
 
+          {/* Box 4 in Row 4: Shipment Cost */}
+          <div
+            onClick={() => {
+              setProfitListModalMode?.('shipment_cost');
+              setShowProfitListModal(true);
+            }}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-purple-500 transition-all hover:bg-stone-50/80 group"
+            title="Click to view delivery cost breakdown"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-purple-600 tracking-wider">Shipment Cost</span>
+              <FiTruck className="text-purple-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-purple-600">Rs. {formatApprox(calculatedDeliveryTotal)}</h3>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">View Courier &rarr;</p>
+            </div>
+          </div>
+
         </div>
 
-        {/* ROW 4: 4 LIVE BANK SETTLEMENTS & COURIER PAYOUT METRICS */}
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* ROW 5: 4 LIVE BANK SETTLEMENTS & COURIER PAYOUT METRICS */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4">
 
-          {/* Box 7: Razorpay se kitna paisa bank me aa chuka */}
+          {/* Box 1: Razorpay se kitna paisa bank me aa chuka */}
           <div
             onClick={() => setStoreMetricModalType('razorpay_received')}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-blue-600 transition-all hover:bg-stone-50/80 group"
@@ -887,7 +947,7 @@ export default function DashboardView({
             </div>
           </div>
 
-          {/* Box 8: Razorpay se kitna paisa bank me ane wala h */}
+          {/* Box 2: Razorpay se kitna paisa bank me ane wala h */}
           <div
             onClick={() => setStoreMetricModalType('razorpay_pending')}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-sky-600 transition-all hover:bg-stone-50/80 group"
@@ -907,7 +967,7 @@ export default function DashboardView({
             </div>
           </div>
 
-          {/* Box 9: Shiprocket + Zipypost se kitna paisa bank me aa chuka */}
+          {/* Box 3: Shiprocket + Zipypost se kitna paisa bank me aa chuka */}
           <div
             onClick={() => setStoreMetricModalType('courier_received')}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-purple-600 transition-all hover:bg-stone-50/80 group"
@@ -925,7 +985,7 @@ export default function DashboardView({
             </div>
           </div>
 
-          {/* Box 10: Shiprocket + zipypost se kitna paisa bank me ane wala h */}
+          {/* Box 4: Shiprocket + zipypost se kitna paisa bank me ane wala h */}
           <div
             onClick={() => setStoreMetricModalType('courier_pending')}
             className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-purple-600 transition-all hover:bg-stone-50/80 group"
@@ -946,7 +1006,7 @@ export default function DashboardView({
         </div>
       </div>
 
-   
+
 
       {/* LOWER SECTION: RECENT ORDERS & DELIVERED QUICK LEDGER */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -969,7 +1029,7 @@ export default function DashboardView({
                       <span className="font-mono font-bold text-stone-900">{order.id}</span>
                       <span className="font-semibold text-stone-800">{order.customer_name}</span>
                       {orderRepeatMap?.get(String(order.id))?.isRepeat && (
-                        <span 
+                        <span
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200"
                           title={`Repeat Customer: Order #${orderRepeatMap.get(String(order.id)).orderIndex} (${orderRepeatMap.get(String(order.id)).totalOrders} total orders)`}
                         >
@@ -988,13 +1048,12 @@ export default function DashboardView({
                   </div>
                   <div className="text-right shrink-0">
                     <span className="font-bold text-stone-900 block">Rs. {formatApprox(order.total_amount)}</span>
-                    <span className={`inline-block text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded mt-0.5 ${
-                      order.status === 'Delivered' 
-                        ? 'bg-green-50 text-green-700 border border-green-200' 
-                        : order.status === 'Shipped' 
-                          ? 'bg-blue-50 text-blue-700 border border-blue-200' 
+                    <span className={`inline-block text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded mt-0.5 ${order.status === 'Delivered'
+                        ? 'bg-green-50 text-green-700 border border-green-200'
+                        : order.status === 'Shipped'
+                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
                           : 'bg-amber-50 text-amber-700 border border-amber-200'
-                    }`}>
+                      }`}>
                       {order.status}
                     </span>
                   </div>
@@ -1007,120 +1066,199 @@ export default function DashboardView({
         </div>
 
         {/* Right Column: Delivered Orders Dashboard View */}
-        <div className="bg-white border border-stone-200 rounded-md p-5 shadow-2xs space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-150 pb-2.5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <FiCheckCircle className="text-green-600" size={15} />
-              <h3 className="text-xs uppercase font-bold tracking-wider text-stone-900">
-                Delivered Orders Ledger
-              </h3>
-            </div>
-            
-            <div className="flex items-center gap-1">
-              {[
-                { id: 'yesterday', label: 'Yesterday' },
-                { id: 'today', label: 'Today' },
-                { id: 'last7days', label: 'Last 7 Days' },
-                { id: 'all', label: 'All' },
-              ].map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setDashboardDeliveredFilter(t.id)}
-                  className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded cursor-pointer transition-all ${
-                    dashboardDeliveredFilter === t.id
-                      ? 'bg-green-700 text-white'
-                      : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
-                  }`}
-                >
-                  {t.label} ({deliveredCounts[t.id] || 0})
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex justify-between items-center bg-green-50/60 border border-green-150 p-2.5 rounded text-xs">
-            <span className="font-semibold text-green-800">
-              {dashboardDeliveredFilter === 'yesterday'
-                ? "Yesterday's Delivered"
-                : dashboardDeliveredFilter === 'today'
-                  ? "Today's Delivered"
-                  : dashboardDeliveredFilter === 'last7days'
-                    ? "Last 7 Days Delivered"
-                    : "All Delivered"}
-            </span>
-            <span className="font-bold text-green-700 font-mono">
-              {filterDeliveredOrdersByDate(allDeliveredOrders, dashboardDeliveredFilter).length} Orders &bull; Rs. {formatApprox(deliveredRevenues[dashboardDeliveredFilter] || 0)}
-            </span>
-          </div>
-
+        <div className="bg-white border border-stone-200 rounded-lg p-5 shadow-2xs space-y-3.5">
           {(() => {
-            const list = filterDeliveredOrdersByDate(allDeliveredOrders, dashboardDeliveredFilter);
-            if (list.length === 0) {
-              return (
-                <div className="p-6 text-center text-stone-400 text-xs">
-                  No delivered orders found for {dashboardDeliveredFilter === 'yesterday' ? 'yesterday' : dashboardDeliveredFilter}.
-                </div>
-              );
-            }
+            const isRtoLedger = dashboardLedgerType === 'rto';
+            const activeDeliveredCounts = isRtoLedger ? rtoDeliveredCounts : deliveredCounts;
+            const activeDeliveredRevenues = isRtoLedger ? rtoDeliveredRevenues : deliveredRevenues;
+            const activeDeliveredList = isRtoLedger
+              ? filterRtoDeliveredOrdersByDate(rtoDeliveredOrders, dashboardDeliveredFilter)
+              : filterDeliveredOrdersByDate(allDeliveredOrders, dashboardDeliveredFilter);
+
             return (
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                {list.map(order => {
-                  const delDate = getOrderDeliveryDate(order);
-                  const isRazorpay = String(order.payment_method || '').toLowerCase().includes('razorpay') || String(order.payment_method || '').toLowerCase().includes('payment id');
-                  return (
-                    <div
-                      key={order.id}
-                      onClick={() => setSelectedOrder(order)}
-                      className="flex items-center justify-between gap-3 text-xs p-2.5 rounded bg-stone-50 border border-stone-150 hover:bg-stone-100 transition-colors cursor-pointer"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono font-bold text-stone-900">{order.id}</span>
-                          <span className="font-semibold text-stone-800">{order.customer_name}</span>
-                      {orderRepeatMap?.get(String(order.id))?.isRepeat && (
-                        <span 
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200"
-                          title={`Repeat Customer: Order #${orderRepeatMap.get(String(order.id)).orderIndex} (${orderRepeatMap.get(String(order.id)).totalOrders} total orders)`}
-                        >
-                          <FiRepeat size={8} />
-                          {getRepeatLabel(orderRepeatMap.get(String(order.id)).orderIndex)}
-                        </span>
-                      )}
-                        </div>
-                        <span className="text-[10px] text-stone-400 block mt-0.5">
-                          {delDate
-                            ? `Delivered: ${delDate.toLocaleDateString("en-US", { month: 'short', day: 'numeric' })} at ${delDate.toLocaleTimeString("en-US", { hour: '2-digit', minute: '2-digit' })}`
-                            : 'Delivery date unavailable'}
-                        </span>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <span className="font-bold text-green-700 block">Rs. {formatApprox(order.total_amount)}</span>
-                        <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                          isRazorpay ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-purple-50 text-purple-700 border border-purple-200'
-                        }`}>
-                          {isRazorpay ? 'Razorpay' : 'COD'}
-                        </span>
-                      </div>
+              <>
+                {/* 1. Header: Icon & Title on left, Delivered/RTO Switch on right */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-stone-150">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${isRtoLedger
+                        ? 'bg-amber-100/80 border-amber-200 text-amber-700'
+                        : 'bg-green-100/80 border-green-200 text-green-700'
+                      }`}>
+                      <FiCheckCircle size={16} />
                     </div>
-                  );
-                })}
-              </div>
+                    <div>
+                      <h3 className="text-xs uppercase font-bold tracking-wider text-stone-900 flex items-center gap-2">
+                        <span>{isRtoLedger ? 'RTO Delivered Ledger' : 'Delivered Orders Ledger'}</span>
+                      </h3>
+                      <p className="text-[10px] text-stone-500 font-normal">
+                        {isRtoLedger ? 'Returned orders delivered back to seller' : 'Orders successfully delivered to customers'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Mode Toggle Switch */}
+                  <div className="inline-flex items-center rounded-lg bg-stone-100 p-1 border border-stone-200/90 self-start sm:self-auto shrink-0 shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => setDashboardLedgerType('delivered')}
+                      className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md cursor-pointer transition-all ${!isRtoLedger
+                          ? 'bg-green-700 text-white shadow-xs'
+                          : 'text-stone-500 hover:text-stone-800'
+                        }`}
+                    >
+                      Delivered
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDashboardLedgerType('rto')}
+                      className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md cursor-pointer transition-all ${isRtoLedger
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-stone-500 hover:text-stone-800'
+                        }`}
+                      title="Switch to RTO Delivered Ledger"
+                    >
+                      RTO
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Date Filter Tabs - Spacious, Even Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 bg-stone-50/80 p-1 rounded-lg border border-stone-200/80">
+                  {[
+                    { id: 'today', label: 'Today' },
+                    { id: 'yesterday', label: 'Yesterday' },
+                    { id: 'last7days', label: 'Last 7 Days' },
+                    { id: 'all', label: 'All Time' },
+                  ].map((t) => {
+                    const active = dashboardDeliveredFilter === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setDashboardDeliveredFilter(t.id)}
+                        className={`py-1.5 px-2 text-center rounded-md text-[10px] transition-all cursor-pointer flex items-center justify-center gap-1.5 ${active
+                            ? (isRtoLedger
+                              ? 'bg-amber-600 text-white font-bold shadow-xs'
+                              : 'bg-green-700 text-white font-bold shadow-xs')
+                            : 'text-stone-600 hover:bg-stone-200/70 hover:text-stone-900 font-medium'
+                          }`}
+                      >
+                        <span>{t.label}</span>
+                        <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${active ? 'bg-white/25 text-white' : 'bg-stone-200 text-stone-700'
+                          }`}>
+                          {activeDeliveredCounts[t.id] || 0}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* 3. Summary Banner */}
+                <div className={`flex justify-between items-center px-3.5 py-2.5 rounded-lg text-xs border ${isRtoLedger
+                    ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+                    : 'bg-green-50/70 border-green-200 text-green-900'
+                  }`}>
+                  <span className="font-semibold flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${isRtoLedger ? 'bg-amber-500' : 'bg-green-600'}`} />
+                    {dashboardDeliveredFilter === 'yesterday'
+                      ? (isRtoLedger ? "Yesterday's RTO Delivered" : "Yesterday's Delivered")
+                      : dashboardDeliveredFilter === 'today'
+                        ? (isRtoLedger ? "Today's RTO Delivered" : "Today's Delivered")
+                        : dashboardDeliveredFilter === 'last7days'
+                          ? (isRtoLedger ? "Last 7 Days RTO Delivered" : "Last 7 Days Delivered")
+                          : (isRtoLedger ? "All RTO Delivered Orders" : "All Delivered Orders")}
+                  </span>
+                  <span className={`font-bold font-mono text-xs ${isRtoLedger ? 'text-amber-800' : 'text-green-800'}`}>
+                    {activeDeliveredList.length} Orders &bull; Rs. {formatApprox(activeDeliveredRevenues[dashboardDeliveredFilter] || 0)}
+                  </span>
+                </div>
+
+                {/* 4. Orders List */}
+                {activeDeliveredList.length === 0 ? (
+                  <div className="p-8 text-center text-stone-400 text-xs bg-stone-50/50 rounded-lg border border-dashed border-stone-200">
+                    No {isRtoLedger ? 'RTO delivered' : 'delivered'} orders found for {dashboardDeliveredFilter === 'yesterday' ? 'yesterday' : dashboardDeliveredFilter === 'all' ? 'all time' : dashboardDeliveredFilter}.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-68 overflow-y-auto pr-1">
+                    {activeDeliveredList.map(order => {
+                      const delDate = isRtoLedger ? getRtoDeliveredAt(order) : getOrderDeliveryDate(order);
+                      const isRazorpay = String(order.payment_method || '').toLowerCase().includes('razorpay') || String(order.payment_method || '').toLowerCase().includes('payment id');
+                      return (
+                        <div
+                          key={order.id}
+                          onClick={() => setSelectedOrder(order)}
+                          className="flex items-center justify-between gap-3 text-xs p-3 rounded-lg bg-stone-50/70 border border-stone-200 hover:border-stone-300 hover:bg-stone-100 transition-all cursor-pointer shadow-2xs group"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono font-bold text-stone-900 group-hover:text-stone-950">
+                                #{order.id}
+                              </span>
+                              <span className="font-semibold text-stone-800 truncate">
+                                {order.customer_name}
+                              </span>
+                              {orderRepeatMap?.get(String(order.id))?.isRepeat && (
+                                <span
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200"
+                                  title={`Repeat Customer: Order #${orderRepeatMap.get(String(order.id)).orderIndex} (${orderRepeatMap.get(String(order.id)).totalOrders} total orders)`}
+                                >
+                                  <FiRepeat size={8} />
+                                  {getRepeatLabel(orderRepeatMap.get(String(order.id)).orderIndex)}
+                                </span>
+                              )}
+                              {isRtoLedger && (
+                                <span className="px-1.5 py-0.2 text-[8px] font-bold uppercase tracking-wider rounded bg-amber-100 text-amber-900 border border-amber-200 font-mono">
+                                  RTO
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-stone-400 block mt-1">
+                              {delDate
+                                ? `${isRtoLedger ? 'RTO Delivered' : 'Delivered'}: ${delDate.toLocaleDateString("en-US", { month: 'short', day: 'numeric' })} at ${delDate.toLocaleTimeString("en-US", { hour: '2-digit', minute: '2-digit' })}`
+                                : 'Delivery date unavailable'}
+                            </span>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className={`font-bold block ${isRtoLedger ? 'text-amber-800' : 'text-green-700'}`}>
+                              Rs. {formatApprox(order.total_amount)}
+                            </span>
+                            <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded mt-0.5 inline-block ${isRazorpay ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-purple-50 text-purple-700 border border-purple-200'
+                              }`}>
+                              {isRazorpay ? 'Razorpay' : 'COD'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* 5. Footer Action Link */}
+                <div className="pt-1.5 flex items-center justify-end border-t border-stone-100">
+                  {isRtoLedger ? (
+                    <button
+                      type="button"
+                      onClick={() => setStoreMetricModalType('rto_delivered')}
+                      className="text-[11px] font-bold tracking-wide text-amber-700 hover:text-amber-900 cursor-pointer flex items-center gap-1.5 py-1 px-2 rounded-md hover:bg-amber-50 transition-colors"
+                    >
+                      Open Full RTO Delivered Modal & Ledger &rarr;
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeliveredDateFilter(dashboardDeliveredFilter);
+                        setShowDeliveredListModal(true);
+                      }}
+                      className="text-[11px] font-bold tracking-wide text-green-700 hover:text-green-900 cursor-pointer flex items-center gap-1.5 py-1 px-2 rounded-md hover:bg-green-50 transition-colors"
+                    >
+                      Open Full Delivered Orders List & Export PDF &rarr;
+                    </button>
+                  )}
+                </div>
+              </>
             );
           })()}
-
-          <div className="pt-2 text-right">
-            <button
-              type="button"
-              onClick={() => {
-                setDeliveredDateFilter(dashboardDeliveredFilter);
-                setShowDeliveredListModal(true);
-              }}
-              className="text-[10px] font-bold uppercase tracking-wider text-green-700 hover:text-green-900 cursor-pointer flex items-center gap-1 ml-auto"
-            >
-              Open Full Delivered Orders List & Export PDF &rarr;
-            </button>
-          </div>
         </div>
       </div>
 
@@ -1133,6 +1271,7 @@ export default function DashboardView({
         orders={orders}
         products={products}
         setSelectedOrder={setSelectedOrder}
+        onToggleFakeRto={handleToggleFakeRto}
       />
     </div>
   );

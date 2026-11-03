@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import {
   FiX,
   FiSearch,
@@ -9,9 +9,13 @@ import {
   FiLayers,
   FiTrendingUp,
   FiCreditCard,
-  FiXCircle
+  FiXCircle,
+  FiAlertTriangle,
+  FiChevronLeft,
+  FiChevronRight,
+  FiMove
 } from 'react-icons/fi';
-import { calculateOrderProfit, getCurrentCourierStatusText, getOrderStatus, getRtoStage, isRtoOfdOrder } from '../../utils/helpers';
+import { calculateOrderProfit, getCurrentCourierStatusText, getOrderStatus, getRtoStage, isRtoOfdOrder, getRtoDeliveredAt } from '../../utils/helpers';
 
 const parseRtoDate = (value) => {
   if (!value) return null;
@@ -80,6 +84,18 @@ const formatRtoDate = (date) => new Intl.DateTimeFormat('en-IN', {
   timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric'
 }).format(date);
 
+const formatRtoDateWithTime = (date) => {
+  if (!date) return 'N/A';
+  const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0;
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    ...(hasTime ? { hour: '2-digit', minute: '2-digit' } : {})
+  }).format(date);
+};
+
 const getPayoutCustomerName = (entry, orders) => {
   const identifiers = [entry?.id, entry?.order_id, entry?.awb].filter(Boolean).map(value => String(value).trim().toLowerCase());
   const order = (orders || []).find(item => {
@@ -105,16 +121,126 @@ export default function StoreMetricsModal({
   financialSummary,
   orders = [],
   products = [],
-  setSelectedOrder
+  setSelectedOrder,
+  onToggleFakeRto
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('all');
 
-  // Reset state when modal opens/closes
-  React.useEffect(() => {
+  const isWideModal = [
+    'rto_delivered',
+    'fake_rto_delivered',
+    'rto_orders',
+    'rto_in_transit',
+    'rto_ofd',
+    'exception_orders',
+    'courier_received',
+    'courier_pending',
+    'razorpay_received',
+    'razorpay_pending'
+  ].includes(modalType);
+
+  const tableContainerRef = useRef(null);
+  // Synchronous initialization so the scroller is present on Frame 0 without popping in / jitter
+  const [scrollState, setScrollState] = useState(() => ({
+    scrollLeft: 0,
+    maxScroll: isWideModal ? 800 : 0,
+    canScroll: isWideModal,
+    ratio: 0
+  }));
+
+  const updateScrollState = useCallback(() => {
+    const el = tableContainerRef.current;
+    if (!el) {
+      if (!isWideModal) {
+        setScrollState(prev => (prev.canScroll ? { scrollLeft: 0, maxScroll: 0, canScroll: false, ratio: 0 } : prev));
+      }
+      return;
+    }
+    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+    const can = max > 10 || isWideModal;
+    const current = el.scrollLeft;
+    const ratio = max > 0 ? Math.min(1, Math.max(0, current / max)) : 0;
+    setScrollState(prev => {
+      if (
+        prev.scrollLeft === current &&
+        prev.maxScroll === max &&
+        prev.canScroll === can &&
+        Math.abs(prev.ratio - ratio) < 0.005
+      ) {
+        return prev;
+      }
+      return {
+        scrollLeft: current,
+        maxScroll: max,
+        canScroll: can,
+        ratio
+      };
+    });
+  }, [isWideModal]);
+
+  const setTableRef = useCallback((node) => {
+    if (tableContainerRef.current && tableContainerRef.current._scrollHandler) {
+      tableContainerRef.current.removeEventListener('scroll', tableContainerRef.current._scrollHandler);
+      tableContainerRef.current._scrollHandler = null;
+    }
+    tableContainerRef.current = node;
+    if (node) {
+      const handler = () => updateScrollState();
+      node._scrollHandler = handler;
+      node.addEventListener('scroll', handler, { passive: true });
+      // Immediate synchronous measure - zero delay
+      updateScrollState();
+    }
+  }, [updateScrollState]);
+
+  // Reset state when modal opens/closes without delay
+  useEffect(() => {
     setSearchQuery('');
     setActiveTab('all');
-  }, [modalType, isOpen]);
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft = 0;
+    }
+    updateScrollState();
+  }, [modalType, isOpen, updateScrollState]);
+
+  // Recalculate scroll dimensions when data/search changes immediately
+  useEffect(() => {
+    updateScrollState();
+  }, [searchQuery, activeTab, orders, updateScrollState]);
+
+  // Observe resize on tableContainerRef
+  useEffect(() => {
+    const el = tableContainerRef.current;
+    if (!el) return;
+    updateScrollState();
+
+    let ro;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => updateScrollState());
+      ro.observe(el);
+    }
+    return () => {
+      if (ro) ro.disconnect();
+    };
+  }, [updateScrollState]);
+
+  const handleScrollStep = (action) => {
+    const el = tableContainerRef.current;
+    if (!el) return;
+    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+    if (action === 'start') {
+      el.scrollTo({ left: 0, behavior: 'smooth' });
+    } else if (action === 'end') {
+      el.scrollTo({ left: max, behavior: 'smooth' });
+    } else if (action === 'left') {
+      const step = Math.max(260, Math.round(el.clientWidth * 0.4));
+      el.scrollTo({ left: Math.max(0, el.scrollLeft - step), behavior: 'smooth' });
+    } else if (action === 'right') {
+      const step = Math.max(260, Math.round(el.clientWidth * 0.4));
+      el.scrollTo({ left: Math.min(max, el.scrollLeft + step), behavior: 'smooth' });
+    }
+  };
 
   // Non-cancelled orders helper
   const nonCancelledOrders = useMemo(() => {
@@ -282,6 +408,12 @@ export default function StoreMetricsModal({
     modalSubtitle = `Returned shipments out for delivery back to sender (${rtoOrders.filter(order => getRtoStage(order) === 'ofd').length} Orders)`;
     icon = <FiTruck className="text-purple-700" size={18} />;
     iconBg = 'bg-purple-100 border-purple-200';
+  } else if (modalType === 'fake_rto_delivered') {
+    const fakeCount = rtoOrders.filter(order => getRtoStage(order) === 'delivered' && Boolean(order.is_fake_rto || order.shipment_details?.is_fake_rto)).length;
+    modalTitle = 'Fake RTO Delivered Orders';
+    modalSubtitle = `Returned orders flagged as Fake RTO (${fakeCount} Orders)`;
+    icon = <FiAlertTriangle className="text-rose-700" size={18} />;
+    iconBg = 'bg-rose-100 border-rose-200';
   }
 
   return (
@@ -351,7 +483,7 @@ export default function StoreMetricsModal({
                   />
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-150">
                     <thead>
                       <tr className="bg-stone-100 border-b border-stone-200 text-stone-600 uppercase tracking-wider font-bold text-[9px]">
@@ -449,7 +581,7 @@ export default function StoreMetricsModal({
                   />
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-187.5">
                     <thead>
                       <tr className="bg-emerald-100/70 text-emerald-950 font-bold uppercase text-[9px] tracking-wider">
@@ -592,7 +724,7 @@ export default function StoreMetricsModal({
                   </div>
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-stone-100 border-b border-stone-200 text-stone-600 uppercase tracking-wider font-bold text-[9px]">
@@ -747,7 +879,7 @@ export default function StoreMetricsModal({
                   </div>
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-200">
                     <thead>
                       <tr className="bg-amber-100/70 text-amber-950 font-bold uppercase text-[9px] tracking-wider">
@@ -858,7 +990,7 @@ export default function StoreMetricsModal({
                   />
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-blue-100/70 text-blue-950 font-bold uppercase text-[9px] tracking-wider">
@@ -977,7 +1109,7 @@ export default function StoreMetricsModal({
                   />
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-187.5">
                     <thead>
                       <tr className="bg-blue-100/70 text-blue-950 font-bold uppercase text-[9px] tracking-wider">
@@ -1088,7 +1220,7 @@ export default function StoreMetricsModal({
                   />
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-180">
                     <thead>
                       <tr className="bg-blue-100/60 text-blue-950 font-bold uppercase text-[9px] tracking-wider">
@@ -1165,7 +1297,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 {razorpayPendingItems.length > 0 && !reconciliationError ? (
-                  <div className="overflow-x-auto border border-stone-200 rounded">
+                  <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                     <table className="w-full text-left text-xs border-collapse min-w-175">
                       <thead>
                         <tr className="bg-sky-100/60 text-sky-950 font-bold uppercase text-[9px] tracking-wider">
@@ -1301,7 +1433,7 @@ export default function StoreMetricsModal({
                   </div>
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-purple-100/60 text-purple-950 font-bold uppercase text-[9px] tracking-wider">
@@ -1436,7 +1568,7 @@ export default function StoreMetricsModal({
                   </div>
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-purple-100/60 text-purple-950 font-bold uppercase text-[9px] tracking-wider">
@@ -1536,7 +1668,7 @@ export default function StoreMetricsModal({
                 </div>
 
                 {/* Table */}
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-175">
                     <thead>
                       <tr className="bg-rose-100/60 text-rose-950 font-bold uppercase text-[9px] tracking-wider">
@@ -1629,7 +1761,7 @@ export default function StoreMetricsModal({
                     <input type="search" placeholder="Search order, customer, AWB..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full rounded border border-stone-200 bg-stone-50 py-1.5 pl-9 pr-3 text-xs text-stone-800 outline-none focus:border-amber-600" />
                   </div>
                 </div>
-                <div className="overflow-x-auto rounded border border-stone-200">
+                <div ref={setTableRef} className="overflow-x-auto rounded border border-stone-200">
                   <table className="w-full min-w-[950px] border-collapse text-left text-xs">
                     <thead><tr className="bg-amber-100/70 text-[9px] font-bold uppercase tracking-wider text-amber-950"><th className="p-3">Order</th><th className="p-3">Exception Date</th><th className="p-3">Customer</th><th className="p-3">Location</th><th className="p-3">Courier Status</th><th className="p-3">AWB</th><th className="p-3 text-right">Order Value</th><th className="p-3 text-center">Details</th></tr></thead>
                     <tbody className="divide-y divide-amber-50">
@@ -1656,7 +1788,7 @@ export default function StoreMetricsModal({
             );
           })()}
 
-          {['rto_orders', 'rto_in_transit', 'rto_delivered', 'rto_ofd'].includes(modalType) && (() => {
+          {['rto_orders', 'rto_in_transit', 'rto_delivered', 'rto_ofd', 'fake_rto_delivered'].includes(modalType) && (() => {
             const q = searchQuery.toLowerCase().trim();
             const chargesByAwb = financialSummary?.zipypost?.rto_charges_by_awb || {};
             const formatMoney = (amount) => Number(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1664,18 +1796,23 @@ export default function StoreMetricsModal({
               ? rtoOrders.filter(order => getRtoStage(order) === 'in_transit')
               : modalType === 'rto_delivered'
                 ? rtoOrders.filter(order => getRtoStage(order) === 'delivered')
-                : modalType === 'rto_ofd'
-                  ? rtoOrders.filter(order => getRtoStage(order) === 'ofd')
-                  : rtoOrders;
+                : modalType === 'fake_rto_delivered'
+                  ? rtoOrders.filter(order => getRtoStage(order) === 'delivered' && Boolean(order.is_fake_rto || order.shipment_details?.is_fake_rto))
+                  : modalType === 'rto_ofd'
+                    ? rtoOrders.filter(order => getRtoStage(order) === 'ofd')
+                    : rtoOrders;
+            const isRtoDeliveredModal = modalType === 'rto_delivered' || modalType === 'fake_rto_delivered';
+            const getOrderEventDate = (order) => isRtoDeliveredModal ? getRtoDeliveredAt(order) : getRtoInTransitAt(order);
+
             const rtoSequenceByOrderId = new Map();
             const datedRtoOrders = stageFilteredOrders
-              .map((order, index) => ({ order, index, date: getRtoInTransitAt(order) }))
+              .map((order, index) => ({ order, index, date: getOrderEventDate(order) }))
               .filter(entry => entry.date)
               .sort((a, b) => a.date - b.date || String(a.order.id || '').localeCompare(String(b.order.id || '')) || a.index - b.index);
             datedRtoOrders.forEach(({ order }, index) => {
               rtoSequenceByOrderId.set(String(order.id), index + 1);
             });
-            const rtoBillingOrders = modalType === 'rto_orders'
+            const rtoBillingOrders = (modalType === 'rto_orders' || isRtoDeliveredModal)
               ? [...stageFilteredOrders].sort((a, b) => {
                   const aSequence = rtoSequenceByOrderId.get(String(a.id));
                   const bSequence = rtoSequenceByOrderId.get(String(b.id));
@@ -1708,7 +1845,7 @@ export default function StoreMetricsModal({
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div className="bg-orange-50 border border-orange-200 p-3.5 rounded">
                     <span className="text-[10px] uppercase font-bold text-orange-700 tracking-wider block">
-                    {modalType === 'rto_ofd' ? 'RTO OFD Orders' : modalType === 'rto_in_transit' ? 'In Transit RTO' : modalType === 'rto_delivered' ? 'Delivered RTO' : 'RTO Orders'}
+                    {modalType === 'fake_rto_delivered' ? 'Fake RTO Orders' : modalType === 'rto_ofd' ? 'RTO OFD Orders' : modalType === 'rto_in_transit' ? 'In Transit RTO' : modalType === 'rto_delivered' ? 'Delivered RTO' : 'RTO Orders'}
                   </span>
                     <h4 className="text-xl font-bold text-orange-900 mt-1">{filtered.length}</h4>
                   </div>
@@ -1745,13 +1882,14 @@ export default function StoreMetricsModal({
                   </div>
                 </div>
 
-                <div className="overflow-x-auto border border-stone-200 rounded">
+                <div ref={setTableRef} className="overflow-x-auto border border-stone-200 rounded">
                   <table className="w-full text-left text-xs border-collapse min-w-[1740px]">
                     <thead>
                       <tr className="bg-orange-100/70 text-orange-950 font-bold uppercase text-[9px] tracking-wider">
                         <th className="p-3">Order / Date</th>
-                        <th className="p-3">RTO Transit Date</th>
-                        <th className="p-3 text-center">Day Sequence</th>
+                        <th className="p-3">{isRtoDeliveredModal ? 'RTO Delivered Date' : 'RTO Transit Date'}</th>
+                        <th className="p-3 text-center">{isRtoDeliveredModal ? 'Delivery Sequence' : 'Day Sequence'}</th>
+                        {isRtoDeliveredModal && <th className="p-3 text-center">Fake RTO</th>}
                         <th className="p-3">Customer</th>
                         <th className="p-3">Delivery Location</th>
                         <th className="p-3">Items</th>
@@ -1773,7 +1911,7 @@ export default function StoreMetricsModal({
                         const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || 'N/A';
                         const courierStatus = order.shipment_details?.zipypost_status || order.status || 'RTO';
                         const ledger = getLedgerCharge(order);
-                        const rtoTransitAt = getRtoInTransitAt(order);
+                        const rtoEventAt = isRtoDeliveredModal ? getRtoDeliveredAt(order) : getRtoInTransitAt(order);
                         const rtoSequence = rtoSequenceByOrderId.get(String(order.id));
                         const { deliveryCost, hasDeliveryCost } = calculateOrderProfit(order, products);
                         const address = [order.city, order.state, order.pincode].filter(Boolean).join(', ');
@@ -1785,8 +1923,39 @@ export default function StoreMetricsModal({
                               <span className="font-mono font-bold text-stone-900 block">{order.id || 'N/A'}</span>
                               <span className="text-[10px] text-stone-400">{order.created_at ? new Date(order.created_at).toLocaleDateString('en-IN') : 'N/A'}</span>
                             </td>
-                            <td className="p-3 text-stone-700">{rtoTransitAt ? formatRtoDate(rtoTransitAt) : 'N/A'}</td>
+                            <td className="p-3 text-stone-700">{rtoEventAt ? (isRtoDeliveredModal ? formatRtoDateWithTime(rtoEventAt) : formatRtoDate(rtoEventAt)) : 'N/A'}</td>
                             <td className="p-3 text-center font-mono font-bold text-orange-800">{rtoSequence ? `#${rtoSequence}` : '—'}</td>
+                            {isRtoDeliveredModal && (
+                              <td className="p-3 text-center">
+                                {(() => {
+                                  const isFake = Boolean(order.is_fake_rto || order.shipment_details?.is_fake_rto);
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (typeof onToggleFakeRto === 'function') {
+                                          onToggleFakeRto(order);
+                                        }
+                                      }}
+                                      title={isFake ? "Click to untick Fake RTO" : "Click to mark as Fake RTO"}
+                                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold uppercase transition-all cursor-pointer ${
+                                        isFake
+                                          ? 'bg-rose-600 text-white shadow-xs hover:bg-rose-700'
+                                          : 'bg-white text-stone-600 border border-stone-200 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700'
+                                      }`}
+                                    >
+                                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[10px] ${
+                                        isFake ? 'bg-white text-rose-600 border-white font-bold' : 'border-stone-400 bg-stone-50'
+                                      }`}>
+                                        {isFake ? '✓' : ''}
+                                      </span>
+                                      <span>{isFake ? 'Fake RTO' : 'Mark Fake'}</span>
+                                    </button>
+                                  );
+                                })()}
+                              </td>
+                            )}
                             <td className="p-3">
                               <div className="font-semibold text-stone-800">{order.customer_name || 'Customer'}</div>
                               <div className="text-[10px] text-stone-500 font-mono">{order.phone || 'No phone'}</div>
@@ -1818,7 +1987,7 @@ export default function StoreMetricsModal({
                           </tr>
                         );
                       }) : (
-                        <tr><td colSpan={16} className="p-6 text-center text-stone-400 italic">No RTO orders match this search.</td></tr>
+                        <tr><td colSpan={isRtoDeliveredModal ? 17 : 16} className="p-6 text-center text-stone-400 italic">No RTO orders match this search.</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -1829,12 +1998,99 @@ export default function StoreMetricsModal({
 
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-3.5 border-t border-stone-200 bg-stone-50 flex justify-end shrink-0">
+        {/* Footer with rigidly stable height (h-14 min-h-14) to eliminate any jitter */}
+        <div className="px-4 sm:px-6 py-2 border-t border-stone-200 bg-stone-50 flex items-center justify-between gap-3 shrink-0 h-14 min-h-14">
+          {(isWideModal || scrollState.canScroll) ? (
+            <div
+              onWheel={(e) => {
+                if (tableContainerRef.current && (e.deltaY || e.deltaX)) {
+                  e.preventDefault();
+                  tableContainerRef.current.scrollLeft += (e.deltaX || e.deltaY);
+                }
+              }}
+              className="flex items-center gap-2 sm:gap-2.5 grow max-w-xl md:max-w-2xl bg-white border border-stone-200/90 rounded-lg px-3 py-1 shadow-xs"
+            >
+              {/* Quick Jump to Start */}
+              <button
+                type="button"
+                onClick={() => handleScrollStep('start')}
+                disabled={scrollState.scrollLeft <= 5}
+                title="Jump to Start (Order ID & Date)"
+                className="px-2 py-1 text-[10px] font-bold uppercase rounded border border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100 hover:text-stone-900 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1 cursor-pointer shrink-0"
+              >
+                <span>⇤</span>
+                <span className="hidden sm:inline">Start</span>
+              </button>
+
+              {/* Step Left */}
+              <button
+                type="button"
+                onClick={() => handleScrollStep('left')}
+                disabled={scrollState.scrollLeft <= 5}
+                title="Scroll Left"
+                className="w-6.5 h-6.5 flex items-center justify-center rounded border border-stone-200 bg-white text-stone-600 hover:text-stone-900 hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shrink-0"
+              >
+                <FiChevronLeft size={13} />
+              </button>
+
+              {/* Slider Track & Indicator */}
+              <div className="relative flex-1 flex flex-col justify-center min-w-[120px]">
+                <div className="flex items-center justify-between text-[9px] font-semibold text-stone-400 mb-0.5 select-none leading-none">
+                  <span className="flex items-center gap-1 text-stone-500">
+                    <FiMove size={10} className="text-[#8c6239]" />
+                    <span className="hidden xs:inline">Table Scroll</span>
+                  </span>
+                  <span className="font-mono text-stone-600">{Math.round(scrollState.ratio * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={scrollState.maxScroll || 100}
+                  value={Math.round(scrollState.scrollLeft)}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    if (tableContainerRef.current) {
+                      tableContainerRef.current.scrollLeft = val;
+                    }
+                  }}
+                  className="classy-table-scrollbar w-full"
+                  title="Drag to scroll table left or right"
+                />
+              </div>
+
+              {/* Step Right */}
+              <button
+                type="button"
+                onClick={() => handleScrollStep('right')}
+                disabled={scrollState.scrollLeft >= (scrollState.maxScroll - 5)}
+                title="Scroll Right"
+                className="w-6.5 h-6.5 flex items-center justify-center rounded border border-stone-200 bg-white text-stone-600 hover:text-stone-900 hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shrink-0"
+              >
+                <FiChevronRight size={13} />
+              </button>
+
+              {/* Quick Jump to End (Net Billed / Details) */}
+              <button
+                type="button"
+                onClick={() => handleScrollStep('end')}
+                disabled={scrollState.scrollLeft >= (scrollState.maxScroll - 5)}
+                title="Jump to End (Net Billed & Details)"
+                className="px-2 py-1 text-[10px] font-bold uppercase rounded border border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100 hover:border-orange-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1 cursor-pointer shrink-0"
+              >
+                <span className="hidden sm:inline">Net Billed</span>
+                <span>⇥</span>
+              </button>
+            </div>
+          ) : (
+            <div className="text-[11px] text-stone-400 font-medium">
+              All columns visible
+            </div>
+          )}
+
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2 bg-stone-900 hover:bg-stone-850 text-white text-xs font-bold uppercase tracking-wider rounded cursor-pointer transition-all"
+            className="px-5 py-2 bg-stone-900 hover:bg-stone-850 text-white text-xs font-bold uppercase tracking-wider rounded cursor-pointer transition-all shrink-0 ml-auto"
           >
             Close
           </button>

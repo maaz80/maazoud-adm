@@ -27,11 +27,19 @@ export const getOrderTrackingStatusText = (order) => {
 export const getCurrentCourierStatusText = (order) => {
   const details = order?.shipment_details || {};
   const zipyTracking = details.zipypost_tracking_info || {};
-  const usesZipypost = String(details.carrier || '').toLowerCase().includes('zipy') || Boolean(details.zipypost_awb);
-  const statuses = usesZipypost
-    ? [details.zipypost_status, zipyTracking.current_status, zipyTracking.status, zipyTracking.tracking_status]
-    : [details.shiprocket_status, order?.shiprocket_status, details.current_status, details.tracking_status];
-  return [...statuses, order?.status]
+  const statuses = [
+    details.zipypost_status,
+    details.zipypost_tracking_status,
+    zipyTracking.current_status,
+    zipyTracking.status,
+    zipyTracking.tracking_status,
+    details.shiprocket_status,
+    order?.shiprocket_status,
+    details.current_status,
+    details.tracking_status,
+    order?.status
+  ];
+  return statuses
     .filter(value => typeof value === 'string' || typeof value === 'number')
     .join(' ')
     .toLowerCase()
@@ -64,6 +72,11 @@ export const getRtoStage = (order) => {
   if (/\b(?:rto|return|returned)\b.*\bdelivered\b|\bdelivered\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'delivered';
   if (/\b(?:rto|return|returned)\b.*\bin transit\b|\bin transit\b.*\b(?:rto|return|returned)\b/.test(statusText)) return 'in_transit';
   if (/\brto notified\b|\breturn notified\b/.test(statusText)) return 'in_transit';
+
+  const trackingStatusText = getOrderTrackingStatusText(order);
+  if (/\b(?:rto|return|returned)\b.*\bdelivered\b|\bdelivered\b.*\b(?:rto|return|returned)\b/.test(trackingStatusText)) return 'delivered';
+  if (/\b(?:rto|return|returned)\b.*\bin transit\b|\bin transit\b.*\b(?:rto|return|returned)\b/.test(trackingStatusText)) return 'in_transit';
+
   return 'other';
 };
 
@@ -195,6 +208,73 @@ export const filterDeliveredOrdersByDate = (allDeliveredList, filterType, now = 
     return false;
   });
 };
+
+export const parseRtoDate = (value) => {
+  if (!value) return null;
+  const text = String(value).trim();
+  const dmy = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(.*)$/);
+  const date = dmy
+    ? new Date(Date.UTC(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]), 12))
+    : new Date(text);
+  return Number.isFinite(date.getTime()) ? date : null;
+};
+
+export const getRtoDeliveredAt = (order) => {
+  const shipment = order?.shipment_details || {};
+  const savedDate = parseRtoDate(shipment.rto_delivered_at || shipment.return_delivered_at);
+  if (savedDate) return savedDate;
+
+  const tracking = shipment.zipypost_tracking_info || {};
+  const scans = [
+    tracking.scans,
+    tracking.activities,
+    tracking.events,
+    shipment.last_webhook_payload?.scans
+  ].filter(Array.isArray).flat();
+
+  const matchingScans = scans.map(scan => {
+    const status = `${scan.status || ''} ${scan.activity || ''} ${scan.status_description || ''} ${scan.remark || ''} ${scan.scan || scan['sr-status-label'] || ''}`
+      .toLowerCase().replace(/[_-]+/g, ' ');
+    if (!/\bdelivered\b/.test(status) || /not delivered|undelivered|attempt|exception|ndr|out for delivery/.test(status)) return null;
+    const rawDate = scan.scan_time || scan.scan_datetime || scan.date || scan.datetime || scan.timestamp;
+    const date = parseRtoDate(rawDate);
+    if (!date) return null;
+    const timeMatch = String(scan.time || '').match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (timeMatch && !String(rawDate).includes('T')) {
+      date.setUTCHours(Number(timeMatch[1]), Number(timeMatch[2]), Number(timeMatch[3] || 0));
+      date.setTime(date.getTime() - 330 * 60 * 1000);
+    }
+    return date;
+  }).filter(Boolean).sort((a, b) => b - a);
+  if (matchingScans[0]) return matchingScans[0];
+
+  const standardDelDate = getOrderDeliveryDate(order);
+  if (standardDelDate) return standardDelDate;
+
+  const fallbackDate = parseRtoDate(shipment.custom_delivery_date || shipment.delivered_date || shipment.last_synced_at || order?.updated_at);
+  return fallbackDate || null;
+};
+
+export const filterRtoDeliveredOrdersByDate = (allRtoDeliveredList, filterType, now = new Date()) => {
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayStart = new Date(todayStart);
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  const last7DaysStart = new Date(todayStart);
+  last7DaysStart.setDate(last7DaysStart.getDate() - 7);
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  return (allRtoDeliveredList || []).filter(order => {
+    if (filterType === 'all') return true;
+    const deliveryDate = getRtoDeliveredAt(order);
+    if (!deliveryDate) return false;
+    if (filterType === 'today') return deliveryDate >= todayStart;
+    if (filterType === 'yesterday') return deliveryDate >= yesterdayStart && deliveryDate < todayStart;
+    if (filterType === 'last7days') return deliveryDate >= last7DaysStart;
+    if (filterType === 'thisMonth') return deliveryDate >= thisMonthStart;
+    return false;
+  });
+};
+
 export const COMBO_PRODUCT_MARKER = '<!-- product-type:combo -->';
 const viteEnv = import.meta.env || {};
 export const API_BASE = viteEnv.VITE_API_BASE_URL || (viteEnv.DEV ? '' : 'https://maazoud.vercel.app');
