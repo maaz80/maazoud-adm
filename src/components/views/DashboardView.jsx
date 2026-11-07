@@ -20,7 +20,7 @@ import {
   FiRepeat,
   FiAlertTriangle
 } from 'react-icons/fi';
-import { calculateOrderProfit, isOrderInDateRange, getCurrentCourierStatusText, getOrderStatus, getRepeatLabel, getDateRangeBounds, getRtoStage, isRtoOfdOrder, getRtoDeliveredAt, filterRtoDeliveredOrdersByDate } from '../../utils/helpers';
+import { calculateOrderProfit, isOrderInDateRange, getCurrentCourierStatusText, getOrderStatus, getRepeatLabel, getDateRangeBounds, getRtoStage, isRtoOfdOrder, isOfdOrder, getRtoDeliveredAt, filterRtoDeliveredOrdersByDate } from '../../utils/helpers';
 import StoreMetricsModal from '../modals/StoreMetricsModal';
 
 const formatApprox = (val) => Math.round(parseFloat(val) || 0).toLocaleString('en-IN');
@@ -166,6 +166,7 @@ export default function DashboardView({
   const exceptionOrders = (orders || []).filter(order => getOrderStatus(order) === 'Exception');
   const rtoInTransitOrders = rtoOrders.filter(order => getRtoStage(order) === 'in_transit');
   const rtoDeliveredOrders = rtoOrders.filter(order => getRtoStage(order) === 'delivered');
+  const ofdOrders = (orders || []).filter(order => isOfdOrder(order));
   const fakeRtoDeliveredOrders = (orders || []).filter(order => {
     const isRto = getOrderStatus(order) === 'RTO' && getRtoStage(order) === 'delivered';
     return isRto && Boolean(order.is_fake_rto || order.shipment_details?.is_fake_rto);
@@ -520,7 +521,7 @@ export default function DashboardView({
           <span className="text-[10px] text-stone-400 font-mono">Click card for detailed lists</span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 xl:grid-cols-6 gap-4">
           <div className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2">
             <div className="flex justify-between items-start">
               <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total Orders</span>
@@ -551,6 +552,21 @@ export default function DashboardView({
             <div>
               <h3 className="text-xl font-bold text-stone-900">{orderStatusCounts.Shipped}</h3>
               <p className="text-[9px] text-stone-500 font-light mt-0.5">In courier transit</p>
+            </div>
+          </div>
+
+          <div
+            onClick={() => setStoreMetricModalType('ofd_orders')}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-teal-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view Out For Delivery (OFD) Orders List"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-teal-700 tracking-wider">OFD</span>
+              <FiTruck className="text-teal-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-stone-900">{orderStatusCounts.OFD ?? ofdOrders.length}</h3>
+              <p className="text-[9px] text-teal-700 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">Out For Delivery &rarr;</p>
             </div>
           </div>
 
@@ -591,24 +607,10 @@ export default function DashboardView({
               <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Sales &rarr;</p>
             </div>
           </div>
+        </div>
 
-          <div
-            onClick={() => {
-              setProfitListModalMode?.('total_profit');
-              setShowProfitListModal(true);
-            }}
-            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-green-600 transition-all hover:bg-stone-50/80"
-            title="Click to view net profit breakdown"
-          >
-            <div className="flex justify-between items-start">
-              <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider">Total Profit</span>
-              <FiStar className="text-green-600" size={18} />
-            </div>
-            <div>
-              <h3 className="text-xl font-bold text-green-600">Rs. {formatApprox(calculatedProfitTotal)}</h3>
-              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide">View Profit &rarr;</p>
-            </div>
-          </div>
+        {/* ROW 2: RTO & EXCEPTIONS (6-COLUMN ROW) */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-6 gap-4">
 
           <div
             onClick={() => setStoreMetricModalType('rto_orders')}
@@ -829,8 +831,27 @@ export default function DashboardView({
 
         </div>
 
-        {/* ROW 4: ADS, PROFIT, CANCELLED & SHIPMENT COST (4-COLUMN ROW) */}
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* ROW 4: TOTAL PROFIT, ADS, PROFIT (AFTER ADS), CANCELLED & SHIPMENT COST (5-COLUMN ROW) */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+
+          {/* Box 1 in Row 4: Total Profit */}
+          <div
+            onClick={() => {
+              setProfitListModalMode?.('total_profit');
+              setShowProfitListModal(true);
+            }}
+            className="bg-white border border-stone-200 p-4 rounded-md shadow-2xs space-y-2 cursor-pointer hover:border-green-600 transition-all hover:bg-stone-50/80 group"
+            title="Click to view net profit breakdown"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider">Total Profit</span>
+              <FiStar className="text-green-600" size={18} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-green-600">Rs. {formatApprox(calculatedProfitTotal)}</h3>
+              <p className="text-[9px] text-stone-500 font-semibold mt-0.5 uppercase tracking-wide group-hover:underline">View Profit &rarr;</p>
+            </div>
+          </div>
 
           {/* Box 7: Ads (Marketing Spend & Real Profit) */}
           <div

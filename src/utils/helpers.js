@@ -66,6 +66,42 @@ export const isRtoOfdOrder = (order) => {
     || (/\brto\b/.test(statusText) && /\b(?:out for delivery|ofd)\b/.test(statusText));
 };
 
+export const isOfdOrder = (order) => {
+  if (!order) return false;
+  const status = String(order.status || '').toLowerCase().trim();
+  if (status === 'cancelled' || status === 'canceled') return false;
+  if (status === 'delivered') return false;
+  if (isRtoOrder(order) || getOrderStatus(order) === 'RTO') return false;
+  if (isDeliveryExceptionOrder(order)) return false;
+
+  const ofdRegex = /\b(?:out\s*for\s*delivery|ofd|dispatched\s*for\s*delivery)\b/i;
+  if (ofdRegex.test(status)) return true;
+
+  const currentCourierStatus = getCurrentCourierStatusText(order);
+  if (ofdRegex.test(currentCourierStatus)) return true;
+
+  const details = order.shipment_details || {};
+  const zipyTracking = details.zipypost_tracking_info || {};
+  const trackingText = `${details.zipypost_status || ''} ${details.sub_status || ''} ${details.status || ''} ${details.shiprocket_status || ''} ${order.shiprocket_status || ''} ${zipyTracking.status || ''} ${zipyTracking.current_status || ''} ${zipyTracking.tracking_status || ''} ${zipyTracking.sub_status || ''}`.toLowerCase();
+  if (ofdRegex.test(trackingText)) return true;
+
+  const scans = zipyTracking.scans || zipyTracking.activities || zipyTracking.events || details.last_webhook_payload?.scans;
+  if (Array.isArray(scans) && scans.length > 0) {
+    const latestScan = scans[0] || scans[scans.length - 1];
+    const scanText = `${latestScan?.status || ''} ${latestScan?.activity || ''} ${latestScan?.status_description || ''} ${latestScan?.remark || ''}`.toLowerCase();
+    if (ofdRegex.test(scanText)) return true;
+  }
+
+  if (Array.isArray(order.items)) {
+    for (const item of order.items) {
+      const itemStatus = String(item.status || item.delivery_status || '').toLowerCase();
+      if (ofdRegex.test(itemStatus)) return true;
+    }
+  }
+
+  return false;
+};
+
 export const getRtoStage = (order) => {
   const statusText = getCurrentCourierStatusText(order);
   if (isRtoOfdOrder(order)) return 'ofd';
@@ -374,11 +410,18 @@ export const calculateOrderProfit = (order, productsList) => {
   const itemsProfit = (order.items || []).map(item => {
     const prodId = item.product?.id;
     const prodName = item.product?.name;
+    const product = (productsList || []).find(p => String(p.id) === String(prodId));
     const qty = parseInt(item.quantity) || 1;
     const size = String(item.selectedSize || '3ml').toLowerCase();
+    const costKey = size === '6ml' ? 'base_cost_6ml' : 'base_cost_3ml';
+    const hasVariantCosts = product && ('base_cost_3ml' in product || 'base_cost_6ml' in product);
     
     let unitCost = 100;
-    if (isCombo(prodId, prodName)) {
+    if (hasVariantCosts && product[costKey] !== undefined && product[costKey] !== null && !isNaN(Number(product[costKey]))) {
+      unitCost = Number(product[costKey]);
+    } else if (!hasVariantCosts && product?.base_cost !== undefined && product?.base_cost !== null && !isNaN(Number(product.base_cost))) {
+      unitCost = Number(product.base_cost);
+    } else if (isCombo(prodId, prodName)) {
       unitCost = 177;
     } else if (size === '6ml') {
       unitCost = 156;

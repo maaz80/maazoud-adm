@@ -15,7 +15,7 @@ import {
   FiChevronRight,
   FiMove
 } from 'react-icons/fi';
-import { calculateOrderProfit, getCurrentCourierStatusText, getOrderStatus, getRtoStage, isRtoOfdOrder, getRtoDeliveredAt } from '../../utils/helpers';
+import { calculateOrderProfit, getCurrentCourierStatusText, getOrderStatus, getRtoStage, isRtoOfdOrder, isOfdOrder, getRtoDeliveredAt } from '../../utils/helpers';
 
 const parseRtoDate = (value) => {
   if (!value) return null;
@@ -128,6 +128,7 @@ export default function StoreMetricsModal({
   const [activeTab, setActiveTab] = useState('all');
 
   const isWideModal = [
+    'ofd_orders',
     'rto_delivered',
     'fake_rto_delivered',
     'rto_orders',
@@ -300,6 +301,10 @@ export default function StoreMetricsModal({
     return (orders || []).filter(order => getOrderStatus(order) === 'RTO');
   }, [orders]);
 
+  const ofdOrders = useMemo(() => {
+    return (orders || []).filter(order => isOfdOrder(order));
+  }, [orders]);
+
   // Razorpay settlements list
   const razorpaySettlements = useMemo(() => {
     return financialSummary?.razorpay?.settlements_schedule || [];
@@ -414,6 +419,11 @@ export default function StoreMetricsModal({
     modalSubtitle = `Returned orders flagged as Fake RTO (${fakeCount} Orders)`;
     icon = <FiAlertTriangle className="text-rose-700" size={18} />;
     iconBg = 'bg-rose-100 border-rose-200';
+  } else if (modalType === 'ofd_orders') {
+    modalTitle = 'Out For Delivery Orders (OFD)';
+    modalSubtitle = `Active customer shipments currently out for delivery (${ofdOrders.length} Orders)`;
+    icon = <FiTruck className="text-teal-700" size={18} />;
+    iconBg = 'bg-teal-100 border-teal-200';
   }
 
   return (
@@ -1733,6 +1743,101 @@ export default function StoreMetricsModal({
                       ) : (
                         <tr>
                           <td colSpan={8} className="p-6 text-center text-stone-400 italic">No cancelled orders matching query.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+
+          {modalType === 'ofd_orders' && (() => {
+            const q = searchQuery.toLowerCase().trim();
+            const filtered = ofdOrders.filter(order => {
+              const currentStatus = getCurrentCourierStatusText(order);
+              const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || '';
+              const itemsStr = (order.items || []).map(i => `${i.product?.name || ''} ${i.selectedSize || ''}`).join(' ');
+              return [order.id, order.customer_name, order.phone, order.city, order.state, order.pincode, awb, currentStatus, itemsStr]
+                .some(value => String(value || '').toLowerCase().includes(q));
+            });
+            return (
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="rounded border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-900">
+                    These customer orders are currently out with the courier delivery agent for doorstep delivery.
+                  </p>
+                  <div className="relative w-full sm:max-w-xs">
+                    <FiSearch className="absolute left-3 top-2.5 text-stone-400" size={14} />
+                    <input
+                      type="search"
+                      placeholder="Search order, customer, product, AWB..."
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      className="w-full rounded border border-stone-200 bg-stone-50 py-1.5 pl-9 pr-3 text-xs text-stone-800 outline-none focus:border-teal-600"
+                    />
+                  </div>
+                </div>
+                <div ref={setTableRef} className="overflow-x-auto rounded border border-stone-200">
+                  <table className="w-full min-w-[1000px] border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="bg-teal-100/70 text-[9px] font-bold uppercase tracking-wider text-teal-950">
+                        <th className="p-3">Order</th>
+                        <th className="p-3">Customer</th>
+                        <th className="p-3">Delivery Location</th>
+                        <th className="p-3">Products / Items</th>
+                        <th className="p-3">Courier Status</th>
+                        <th className="p-3">AWB</th>
+                        <th className="p-3 text-right">Order Value</th>
+                        <th className="p-3 text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-teal-50">
+                      {filtered.length ? filtered.map(order => {
+                        const awb = order.shipment_details?.zipypost_awb || order.shiprocket_awb || '—';
+                        const courierStatus = order.shipment_details?.zipypost_status || order.shipment_details?.shiprocket_status || order.status || 'Out for Delivery';
+                        const items = (order.items || []).map(item => `${item.product?.name || 'Product'} (${item.selectedSize || 'Size N/A'} ×${item.quantity || 1})`).join(', ');
+                        return (
+                          <tr key={order.id} className="hover:bg-teal-50/40 transition-colors">
+                            <td className="p-3">
+                              <span className="block font-mono font-bold text-stone-900">{order.id}</span>
+                              <span className="text-[10px] text-stone-400">{order.created_at ? new Date(order.created_at).toLocaleDateString('en-IN') : '—'}</span>
+                            </td>
+                            <td className="p-3">
+                              <span className="block font-semibold text-stone-800">{order.customer_name || 'Customer'}</span>
+                              <span className="font-mono text-[10px] text-stone-500">{order.phone || '—'}</span>
+                            </td>
+                            <td className="p-3 text-stone-600">
+                              {[order.city, order.state, order.pincode].filter(Boolean).join(', ') || order.address || '—'}
+                            </td>
+                            <td className="p-3 text-stone-700 max-w-[250px]">
+                              <span className="line-clamp-2" title={items}>{items || '—'}</span>
+                            </td>
+                            <td className="p-3">
+                              <span className="rounded border border-teal-200 bg-teal-50 px-2 py-1 text-[10px] font-bold uppercase text-teal-800">
+                                {courierStatus}
+                              </span>
+                            </td>
+                            <td className="p-3 font-mono text-[10px] text-stone-600">{awb}</td>
+                            <td className="p-3 text-right font-semibold text-stone-800">
+                              ₹{Number(order.total_amount || 0).toLocaleString('en-IN')}
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedOrder && setSelectedOrder(order)}
+                                className="cursor-pointer rounded border border-stone-200 bg-white px-2 py-1 text-[10px] font-bold text-stone-700 hover:bg-stone-50"
+                              >
+                                Details
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      }) : (
+                        <tr>
+                          <td colSpan={8} className="p-7 text-center italic text-stone-400">
+                            No Out For Delivery orders found.
+                          </td>
                         </tr>
                       )}
                     </tbody>

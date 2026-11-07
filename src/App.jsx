@@ -24,7 +24,8 @@ import {
   getCustomerOrderStats,
   getRtoDeliveredAt,
   filterRtoDeliveredOrdersByDate,
-  getRtoStage
+  getRtoStage,
+  isOfdOrder
 } from './utils/helpers';
 
 // Components
@@ -137,6 +138,9 @@ export default function App() {
     price3mlOffer: '',
     price6mlOrig: '',
     price6mlOffer: '',
+    baseCost3ml: '',
+    baseCost6ml: '',
+    inspiredBy: '',
     description: '',
     isOutOfStock: false,
     isOutOfStock3ml: false,
@@ -1118,6 +1122,12 @@ export default function App() {
       price3mloffer: price3mlOffer,
       price6mlorig: price6mlOrig,
       price6mloffer: price6mlOffer,
+      base_cost: newProduct.baseCost3ml !== '' && newProduct.baseCost3ml != null && newProduct.baseCost3ml === newProduct.baseCost6ml
+        ? Number(newProduct.baseCost3ml)
+        : null,
+      base_cost_3ml: newProduct.baseCost3ml === '' || newProduct.baseCost3ml == null ? null : Number(newProduct.baseCost3ml),
+      base_cost_6ml: newProduct.baseCost6ml === '' || newProduct.baseCost6ml == null ? null : Number(newProduct.baseCost6ml),
+      inspired_by: newProduct.inspiredBy?.trim() || null,
       description: formattedDesc,
       is_out_of_stock: Boolean(newProduct.isOutOfStock),
       in_stock: !newProduct.isOutOfStock,
@@ -1161,6 +1171,9 @@ export default function App() {
       price3mlOffer: '',
       price6mlOrig: '',
       price6mlOffer: '',
+      baseCost3ml: '',
+      baseCost6ml: '',
+      inspiredBy: '',
       description: '',
       isOutOfStock: false,
       isOutOfStock3ml: false,
@@ -1730,7 +1743,15 @@ export default function App() {
 
       const manualOrderId = `ORD-OFFLINE-${Date.now().toString().slice(-6)}`;
       const sellPrice = parseFloat(manualSellingPrice) || 0;
-      const baseCost = parseFloat(manualBaseCost) || (manualSelectedSize === '6ml' ? 156 : 100);
+      const costKey = manualSelectedSize === '6ml' ? 'base_cost_6ml' : 'base_cost_3ml';
+      const configuredProductCost = Number(chosenProd?.[costKey]);
+      const defaultUnitCost = Number.isFinite(configuredProductCost) && chosenProd?.[costKey] != null
+        ? configuredProductCost
+        : (manualSelectedSize === '6ml' ? 156 : 100);
+      const quantity = parseInt(manualQuantity) || 1;
+      const baseCost = manualBaseCost !== '' && manualBaseCost != null
+        ? parseFloat(manualBaseCost)
+        : defaultUnitCost * quantity;
       const deliveryCharge = parseFloat(manualDeliveryCharge) || 0;
 
       const deliveryDateIso = manualStatus === 'Delivered' ? new Date().toISOString() : null;
@@ -1757,7 +1778,7 @@ export default function App() {
           {
             product_id: manualSelectedProductId,
             selectedSize: manualSelectedSize,
-            quantity: parseInt(manualQuantity) || 1,
+            quantity,
             price: sellPrice,
             product: {
               id: manualSelectedProductId,
@@ -2079,7 +2100,8 @@ export default function App() {
   const orderStatusCounts = {
     All: orders.length,
     Processing: orders.filter(o => getOrderStatus(o) === 'Processing').length,
-    Shipped: orders.filter(o => getOrderStatus(o) === 'Shipped').length,
+    Shipped: orders.filter(o => getOrderStatus(o) === 'Shipped' && !isOfdOrder(o)).length,
+    OFD: orders.filter(o => isOfdOrder(o)).length,
     Delivered: allDeliveredOrders.length,
     Cancelled: orders.filter(o => getOrderStatus(o) === 'Cancelled').length,
     Exception: orders.filter(o => getOrderStatus(o) === 'Exception').length,
@@ -2184,7 +2206,8 @@ export default function App() {
   const dashboardOrderStatusCounts = {
     All: dashboardOrders.length,
     Processing: dashboardOrders.filter(o => getOrderStatus(o) === 'Processing').length,
-    Shipped: dashboardOrders.filter(o => getOrderStatus(o) === 'Shipped').length,
+    Shipped: dashboardOrders.filter(o => getOrderStatus(o) === 'Shipped' && !isOfdOrder(o)).length,
+    OFD: dashboardOrders.filter(o => isOfdOrder(o)).length,
     Delivered: dashboardDeliveredOrders.length,
     Cancelled: dashboardOrders.filter(o => getOrderStatus(o) === 'Cancelled').length,
     Exception: dashboardOrders.filter(o => getOrderStatus(o) === 'Exception').length,

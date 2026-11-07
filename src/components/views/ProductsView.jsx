@@ -44,6 +44,9 @@ export default function ProductsView({
                 price3mlOffer: '',
                 price6mlOrig: '',
                 price6mlOffer: '',
+                baseCost3ml: '',
+                baseCost6ml: '',
+                inspiredBy: '',
                 description: ''
               });
             }
@@ -203,6 +206,46 @@ export default function ProductsView({
               </div>
             </div>
 
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-stone-100 pt-4">
+            <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider">
+              3ml Base Cost (Rs.)
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="e.g. 100"
+                value={newProduct.baseCost3ml ?? ''}
+                onChange={e => setNewProduct({ ...newProduct, baseCost3ml: e.target.value })}
+                className="mt-1 w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none normal-case font-normal"
+              />
+            </label>
+            <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider">
+              6ml Base Cost (Rs.)
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="e.g. 156"
+                value={newProduct.baseCost6ml ?? ''}
+                onChange={e => setNewProduct({ ...newProduct, baseCost6ml: e.target.value })}
+                className="mt-1 w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none normal-case font-normal"
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-stone-100 pt-4">
+            <label className="block text-[10px] font-bold text-stone-600 uppercase tracking-wider">
+              Inspired By
+              <input
+                type="text"
+                placeholder="e.g. a classic oud fragrance"
+                value={newProduct.inspiredBy ?? ''}
+                onChange={e => setNewProduct({ ...newProduct, inspiredBy: e.target.value })}
+                className="mt-1 w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs focus:ring-1 focus:ring-[#8c6239] focus:outline-none normal-case font-normal"
+              />
+            </label>
           </div>
 
           <div className="border-t border-stone-100 pt-4 space-y-3">
@@ -538,6 +581,9 @@ export default function ProductsView({
                             price3mlOffer: String(prod.price3mloffer || ''),
                             price6mlOrig: String(prod.price6mlorig || ''),
                             price6mlOffer: String(prod.price6mloffer || ''),
+                            baseCost3ml: prod.base_cost_3ml == null ? (prod.base_cost == null ? '' : String(prod.base_cost)) : String(prod.base_cost_3ml),
+                            baseCost6ml: prod.base_cost_6ml == null ? (prod.base_cost == null ? '' : String(prod.base_cost)) : String(prod.base_cost_6ml),
+                            inspiredBy: prod.inspired_by || '',
                             description: cleanProductDescription(prod.description || ''),
                             isOutOfStock: Boolean(prod.is_out_of_stock || prod.in_stock === false),
                             isOutOfStock3ml: prod.stock_3ml != null ? Number(prod.stock_3ml) <= 0 : Boolean(prod.is_out_of_stock_3ml || prod.in_stock_3ml === false),
